@@ -36,6 +36,21 @@ RUN pip install --no-cache-dir \
     boto3 \
     setuptools
 
+# Secret of Evermore (soe) needs pyevermizer at *generation* time. Archipelago
+# would lazily pip-install it when loading soe.apworld, but the gen container has
+# no network — so bake it at build time (build has network). Without it the world
+# fails to import ("name '_loc' is not defined") and any seed including SoE breaks.
+RUN pip install --no-cache-dir pyevermizer==0.50.1
+
+# The generation container is sealed (no outbound network), yet Archipelago still
+# attempts to pip-install each world's optional *play-time* deps at load. Force
+# pip offline so those attempts fail instantly instead of burning ~8s each on DNS
+# retries (~50s per generation). All build-time installs above already ran with
+# network, so this only affects the lazy installs at runtime.
+ENV PIP_NO_INDEX=1 \
+    PIP_RETRIES=0 \
+    PIP_DEFAULT_TIMEOUT=1
+
 # Scripts from repo root (standalone repo — no archipelago/ prefix)
 COPY generate_template.py /usr/local/bin/generate_template.py
 COPY introspect_options.py /usr/local/bin/introspect_options.py
