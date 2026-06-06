@@ -60,7 +60,21 @@ COPY read_save.py /readsave/read_save.py
 COPY ap_server.sh /ap_server.sh
 COPY entrypoint.sh /entrypoint.sh
 
-RUN chmod +x /usr/local/bin/generate_template.py \
+# Strip CRLF then mark executable. The build context may be checked out on Windows
+# (autocrlf) where these files carry CRLF; a CRLF in a script's shebang makes the
+# kernel look for the interpreter "/bin/sh\r" and fail with "exec: no such file or
+# directory". Normalize to LF at build time so the image works regardless of the
+# host's git line-ending config.
+RUN for f in /usr/local/bin/generate_template.py \
+             /usr/local/bin/introspect_options.py \
+             /usr/local/bin/generate_multiworld.py \
+             /reachable/reachable.py \
+             /readsave/read_save.py \
+             /ap_server.sh \
+             /entrypoint.sh; do \
+        sed -i 's/\r$//' "$f"; \
+    done \
+    && chmod +x /usr/local/bin/generate_template.py \
     /usr/local/bin/introspect_options.py \
     /usr/local/bin/generate_multiworld.py \
     /readsave/read_save.py \
