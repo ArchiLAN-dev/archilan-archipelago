@@ -13,12 +13,17 @@ if [ -z "$GAME_FILE" ]; then
     exit 1
 fi
 
-# Start Archipelago server in background
+# Start Archipelago server in background.
+# ArchipelagoServer defaults release_mode/collect_mode to "auto" (Archipelago
+# settings.py): items auto-release/collect on goal. Default both to "disabled"
+# here, but keep them overridable per launch via RELEASE_MODE/COLLECT_MODE env.
 ArchipelagoServer "$GAME_FILE" \
     --host 0.0.0.0 \
     --port 38281 \
     --password "${PASSWORD:-}" \
     --server_password "${SERVER_PASSWORD:-}" \
+    --release_mode "${RELEASE_MODE:-disabled}" \
+    --collect_mode "${COLLECT_MODE:-disabled}" \
     &
 echo "$!" > "${AP_PID_FILE:-/tmp/ap.pid}"
 
