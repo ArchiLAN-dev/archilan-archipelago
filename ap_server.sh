@@ -6,8 +6,13 @@ if [ -z "$GAME_FILE" ]; then
     echo "ERROR: no game file found in $GAME_DIR" >&2
     exit 1
 fi
+# Weekly runs are individual, competitive seeds: never auto-release or auto-collect
+# a player's items on goal completion. ArchipelagoServer defaults both modes to "auto"
+# (see Archipelago settings.py: release_mode/collect_mode = "auto"), so force them off.
 exec ArchipelagoServer "$GAME_FILE" \
     --host 0.0.0.0 \
     --port 38281 \
     --password "${PASSWORD:-}" \
-    --server_password "${SERVER_PASSWORD:-}"
+    --server_password "${SERVER_PASSWORD:-}" \
+    --release_mode "${RELEASE_MODE:-disabled}" \
+    --collect_mode "${COLLECT_MODE:-disabled}"
