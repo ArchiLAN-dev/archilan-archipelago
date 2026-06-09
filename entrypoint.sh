@@ -13,18 +13,30 @@ if [ -z "$GAME_FILE" ]; then
     exit 1
 fi
 
-# Start Archipelago server in background.
-# ArchipelagoServer defaults release_mode/collect_mode to "auto" (Archipelago
-# settings.py): items auto-release/collect on goal. Default both to "disabled"
-# here, but keep them overridable per launch via RELEASE_MODE/COLLECT_MODE env.
-ArchipelagoServer "$GAME_FILE" \
+# Start Archipelago server in background. Server options are env-overridable per
+# session (see epic 27): release/collect default to "disabled" (AP's built-in default
+# is "auto", which auto-releases/collects on goal); the other defaults below match
+# Archipelago's own defaults, so an unset env changes nothing.
+set -- "$GAME_FILE" \
     --host 0.0.0.0 \
     --port 38281 \
     --password "${PASSWORD:-}" \
     --server_password "${SERVER_PASSWORD:-}" \
     --release_mode "${RELEASE_MODE:-disabled}" \
     --collect_mode "${COLLECT_MODE:-disabled}" \
-    &
+    --remaining_mode "${REMAINING_MODE:-goal}" \
+    --countdown_mode "${COUNTDOWN_MODE:-auto}" \
+    --hint_cost "${HINT_COST:-10}" \
+    --location_check_points "${LOCATION_CHECK_POINTS:-1}" \
+    --auto_shutdown "${AUTO_SHUTDOWN:-0}" \
+    --compatibility "${COMPATIBILITY:-2}"
+
+# --disable_item_cheat is a presence-only flag: add it only when explicitly enabled.
+case "${DISABLE_ITEM_CHEAT:-}" in
+    1 | true | yes | on) set -- "$@" --disable_item_cheat ;;
+esac
+
+ArchipelagoServer "$@" &
 echo "$!" > "${AP_PID_FILE:-/tmp/ap.pid}"
 
 # Wait briefly for the server to initialize before Bridge.py connects
