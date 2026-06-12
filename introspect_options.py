@@ -288,6 +288,24 @@ if hasattr(world_cls, "options_dataclass") and world_cls.options_dataclass is no
             except Exception:
                 pass
 
+        if typ == "range":
+            # Authoritative bounds + default from the Range option class
+            # (range_start / range_end / default), so consumers don't have to
+            # scrape template comments or guess.
+            try:
+                range_start = getattr(field_type, "range_start", None)
+                range_end = getattr(field_type, "range_end", None)
+                range_default = getattr(field_type, "default", None)
+                # bool is an int subclass; ranges never use it - exclude defensively.
+                if isinstance(range_start, int) and not isinstance(range_start, bool):
+                    entry["min"] = range_start
+                if isinstance(range_end, int) and not isinstance(range_end, bool):
+                    entry["max"] = range_end
+                if isinstance(range_default, int) and not isinstance(range_default, bool):
+                    entry["default"] = range_default
+            except Exception:
+                pass
+
         result[field.name] = entry
 
 print(json.dumps({"options": result}))
