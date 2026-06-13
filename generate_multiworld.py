@@ -194,6 +194,115 @@ _worlds_stub.user_folder = None
 _worlds_stub.failed_world_loads = []
 _worlds_stub.network_data_package = {"games": {}}
 
+
+# ─── Host-gated world settings (story 27.11) ──────────────────────────────────
+# Some worlds gate a *player* option behind a *host.yaml* setting of the same
+# concept (e.g. Vampire Survivors `allow_unfair_characters`): generate_early
+# raises unless the host opted in. We generate without a host.yaml, so those
+# gates default off and any seed enabling such an option fails hard. We derive a
+# host.yaml that enables the host *permission* gates (Bool, default False, named
+# allow_*/enable_*) of the loaded worlds. A host setting only *permits* - the
+# world still requires the player's own option for any content to appear - so
+# enabling gates for loaded worlds is safe and never changes a seed unless a
+# player opted in. Non-bool settings (RomFile/Executable/paths) and non-permission
+# toggles are deliberately left untouched.
+
+_HOST_GATE_PREFIXES = ("allow_", "enable_")
+
+
+def _find_settings_groups(world_cls):
+    """Return the settings.Group subclasses declared in a world's own package."""
+    try:
+        import settings as _settings_mod
+    except Exception:
+        return []
+    _group_base = getattr(_settings_mod, "Group", None)
+    if _group_base is None:
+        return []
+    _pkg = getattr(world_cls, "__module__", "") or ""
+    if not _pkg:
+        return []
+    _found = []
+    for _mod_name, _mod in list(sys.modules.items()):
+        if not (_mod_name == _pkg or _mod_name.startswith(_pkg + ".")):
+            continue
+        for _attr in dir(_mod):
+            try:
+                _obj = getattr(_mod, _attr)
+            except Exception:
+                continue
+            if (isinstance(_obj, type) and issubclass(_obj, _group_base)
+                    and _obj is not _group_base and _obj not in _found):
+                _found.append(_obj)
+    return _found
+
+
+def _collect_host_gates(group_cls):
+    """Bool members defaulting False, named allow_*/enable_* (the permission gates)."""
+    _gates = {}
+    for _klass in group_cls.__mro__:
+        # Stop at Archipelago's own settings base classes (module == "settings").
+        if getattr(_klass, "__module__", "") == "settings":
+            break
+        for _name, _val in vars(_klass).items():
+            if _name.startswith("_") or _name in _gates:
+                continue
+            if isinstance(_val, bool) and _val is False and _name.startswith(_HOST_GATE_PREFIXES):
+                _gates[_name] = True
+    return _gates
+
+
+def derive_host_gate_settings(world_types):
+    """Build {settings_key: {gate: True}} enabling host permission gates for the worlds.
+
+    Pure introspection - no per-game list, no player<->host name mapping.
+    """
+    _host = {}
+    for _world_cls in world_types.values():
+        try:
+            _key = getattr(_world_cls, "settings_key", None)
+            if not isinstance(_key, str) or not _key:
+                continue
+            _gates = {}
+            for _group in _find_settings_groups(_world_cls):
+                _gates.update(_collect_host_gates(_group))
+            if _gates:
+                _host.setdefault(_key, {}).update(_gates)
+        except Exception as _e:
+            print(f"Warning: host-gate introspection failed for "
+                  f"{getattr(_world_cls, 'game', '?')}: {_e}", file=sys.stderr)
+    return _host
+
+
+def write_host_gate_yaml(host_settings, path):
+    """Merge the derived gate sections into host.yaml at `path` (create if absent)."""
+    if not host_settings:
+        return
+    import yaml as _yaml
+    _existing = {}
+    try:
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as _f:
+                _loaded = _yaml.safe_load(_f)
+            if isinstance(_loaded, dict):
+                _existing = _loaded
+    except Exception as _e:
+        print(f"Warning: could not read existing host.yaml at {path}: {_e}", file=sys.stderr)
+        _existing = {}
+    for _key, _gates in host_settings.items():
+        _section = _existing.get(_key)
+        if not isinstance(_section, dict):
+            _section = {}
+        _section.update(_gates)
+        _existing[_key] = _section
+    try:
+        with open(path, "w", encoding="utf-8") as _f:
+            _yaml.safe_dump(_existing, _f, default_flow_style=False, sort_keys=True)
+        print(f"DEBUG host gates enabled: {host_settings}", file=sys.stderr)
+    except Exception as _e:
+        print(f"Warning: could not write host.yaml at {path}: {_e}", file=sys.stderr)
+
+
 # ─── Run generation ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import Generate
@@ -324,6 +433,17 @@ if __name__ == "__main__":
 
     print(f"DEBUG worlds loaded: {sorted(__import__('worlds').AutoWorldRegister.world_types)}",
           file=sys.stderr)
+
+    # Story 27.11: enable host-gated permission settings (e.g. VS
+    # allow_unfair_characters) so player options requiring a host.yaml opt-in
+    # don't fail generation. Must run BEFORE Generate.main() loads settings.
+    try:
+        from Utils import user_path as _user_path
+        _host_yaml_path = _user_path("host.yaml")
+        _gate_settings = derive_host_gate_settings(_worlds_pkg.AutoWorldRegister.world_types)
+        write_host_gate_yaml(_gate_settings, _host_yaml_path)
+    except Exception as _e:
+        print(f"Warning: host-gate derivation skipped: {_e}", file=sys.stderr)
 
     erargs, seed = Generate.main()
     ERmain(erargs, seed)
