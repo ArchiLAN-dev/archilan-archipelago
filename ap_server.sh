@@ -8,7 +8,7 @@ if [ -z "$GAME_FILE" ]; then
 fi
 
 # Server options are env-overridable per session (the orchestrateur passes them; see
-# epic 27). release/collect default to "disabled" — ArchipelagoServer's built-in default
+# epic 27). release/collect default to "disabled" - ArchipelagoServer's built-in default
 # is "auto" (settings.py), which would auto-release/collect items on goal; weekly runs are
 # individual competitive seeds, so force them off unless overridden. The other defaults
 # below match Archipelago's own defaults, so an unset env changes nothing.

@@ -38,7 +38,7 @@ RUN pip install --no-cache-dir \
 
 # Secret of Evermore (soe) needs pyevermizer at *generation* time. Archipelago
 # would lazily pip-install it when loading soe.apworld, but the gen container has
-# no network — so bake it at build time (build has network). Without it the world
+# no network - so bake it at build time (build has network). Without it the world
 # fails to import ("name '_loc' is not defined") and any seed including SoE breaks.
 RUN pip install --no-cache-dir pyevermizer==0.50.1
 
@@ -51,7 +51,7 @@ ENV PIP_NO_INDEX=1 \
     PIP_RETRIES=0 \
     PIP_DEFAULT_TIMEOUT=1
 
-# Scripts from repo root (standalone repo — no archipelago/ prefix)
+# Scripts from repo root (standalone repo - no archipelago/ prefix)
 COPY generate_template.py /usr/local/bin/generate_template.py
 COPY introspect_options.py /usr/local/bin/introspect_options.py
 COPY generate_multiworld.py /usr/local/bin/generate_multiworld.py

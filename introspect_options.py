@@ -233,11 +233,11 @@ def classify(field_type: type) -> str | None:
     if not isinstance(field_type, type):
         return None
     try:
-        # OptionDict before Choice — OptionDict may not inherit from Choice but
+        # OptionDict before Choice - OptionDict may not inherit from Choice but
         # check order matters if a future version changes the hierarchy.
         if _OptionDict and issubclass(field_type, _OptionDict):
             return "weights"
-        # Toggle before Choice — Toggle subclasses Choice in some AP versions.
+        # Toggle before Choice - Toggle subclasses Choice in some AP versions.
         if _Toggle and issubclass(field_type, _Toggle):
             return "toggle"
         if _Choice and issubclass(field_type, _Choice):

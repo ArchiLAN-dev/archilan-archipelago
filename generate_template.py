@@ -66,7 +66,7 @@ for _tk_name in ("tkinter", "_tkinter", "tkinter.ttk", "tkinter.font",
 # vendored copy so apworlds that call pkg_resources.resource_listdir() (e.g.
 # pokemon_emerald) get the real implementation instead of an auto-stub.
 try:
-    import pkg_resources  # noqa: F401 — already installed (older setuptools)
+    import pkg_resources  # noqa: F401 - already installed (older setuptools)
 except ImportError:
     from pip._vendor import pkg_resources as _pr  # type: ignore[no-redef]
     sys.modules["pkg_resources"] = _pr
@@ -322,7 +322,7 @@ if args.world_directory:
                 # taking entries[0], which may be a non-package file (e.g.
                 # archipelago.json, .gitattributes) that sorts before the package.
                 # Find the raw directory name (may contain spaces or other
-                # non-identifier chars — we will sanitize below).
+                # non-identifier chars - we will sanitize below).
                 raw_pkg = None
                 for _e in entries:
                     _norm = _e.replace("\\", "/")
@@ -357,7 +357,7 @@ if args.world_directory:
         # Extract to a temp directory so __file__-based open() calls work.
         # Loading the ZIP directly via zipimport sets __file__ to a path inside
         # the archive (e.g. /tmp/xxx.apworld/raft/module.pyc), which is not a
-        # real filesystem path — open() on it fails with NotADirectoryError.
+        # real filesystem path - open() on it fails with NotADirectoryError.
         _tmp_dir = tempfile.mkdtemp(prefix="apworld_")
         atexit.register(shutil.rmtree, _tmp_dir, True)
         with zipfile.ZipFile(str(_apw)) as _zf:
