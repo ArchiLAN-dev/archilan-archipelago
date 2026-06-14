@@ -318,7 +318,26 @@ def build_multiworld(game: str, player_name: str, yaml_path: str, slot_data: dic
 
     mw = MultiWorld(1)
     mw.generation_is_fake = True
-    mw.re_gen_passthrough = {game: slot_data} if slot_data else {}
+    # Universal Tracker does not expose the raw network slot_data as re_gen_passthrough:
+    # it first runs the world's interpret_slot_data() hook, which rebuilds structures the
+    # network serialization flattened (e.g. Mirror's Edge stores target_times keyed by the
+    # MirrorsEdgeLevels enum, but fill_slot_data serializes those keys as plain strings).
+    # generate_early() of such worlds then assumes the enum keys are back. Our fake-gen
+    # harness must emulate UT here too; otherwise interpret-dependent worlds crash during
+    # the reachability pass (AttributeError: 'str' object has no attribute 'value').
+    passthrough = slot_data
+    if slot_data:
+        world_cls = AutoWorld.AutoWorldRegister.world_types.get(game)
+        interpret = getattr(world_cls, "interpret_slot_data", None) if world_cls else None
+        if interpret is not None:
+            try:
+                # process_slot_data mutates in place, so hand it a defensive copy.
+                result = interpret(dict(slot_data))
+                if result:  # UT only overrides re_gen_passthrough when interpret returns truthy.
+                    passthrough = result
+            except Exception:
+                pass  # fall back to the raw slot_data
+    mw.re_gen_passthrough = {game: passthrough} if passthrough else {}
     # Universal Tracker sets this attribute on the multiworld; UT-aware worlds (e.g. pokepark)
     # read it when generation_is_fake is True. Our fake-gen harness must emulate UT here too:
     # default to "off" (no deferred-connection enforcement) so those worlds don't crash on a
@@ -405,7 +424,16 @@ def main() -> None:
         sys.exit(1)
     yaml_path = str(yaml_candidates[0])
 
-    mw, player_id = build_multiworld(game, player_name, yaml_path, slot_data)
+    try:
+        mw, player_id = build_multiworld(game, player_name, yaml_path, slot_data)
+    except Exception as exc:
+        # A single world that fails to fake-generate (e.g. a buggy apworld whose generate_early
+        # raises) must not take down the whole daemon and surface to the bridge as an opaque
+        # "reachable daemon stream closed". Emit a structured error on stdout instead: in daemon
+        # mode the bridge reads it as a non-ready line and reports it; in one-shot mode the bridge
+        # extracts {"error": ...} from stdout. Either way the other slots keep working.
+        print(json.dumps({"error": f"reachability generation failed for {game}: {exc}"}), flush=True)
+        sys.exit(1)
     # Prefer the session's own datapackage for ID→name resolution: it matches the IDs
     # in received_items exactly (same generation). The rebuilt world's item_id_to_name
     # can diverge if the apworld was updated after the session was created.
