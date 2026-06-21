@@ -78,6 +78,10 @@ except ImportError:
 _worlds_stub = types.ModuleType("worlds")
 _worlds_stub.__path__ = [f"{ARCH_SRC}/worlds"]
 _worlds_stub.__package__ = "worlds"
+# Point at the real worlds/__init__.py so apworlds that resolve files relative to
+# `worlds.__file__` work (e.g. yugiohgx: os.path.dirname(worlds.__file__)/_bizhawk.apworld).
+# Without it, the __getattr__ below would try to import `worlds.__file__` and raise.
+_worlds_stub.__file__ = f"{ARCH_SRC}/worlds/__init__.py"
 
 
 def _worlds_getattr(name: str) -> object:
@@ -88,6 +92,11 @@ def _worlds_getattr(name: str) -> object:
     sub-module from ARCH_SRC/worlds/ and cache it on the stub so the next access
     is free.  If the sub-module doesn't exist we raise AttributeError normally.
     """
+    # Dunder attributes are never sub-modules; behave like a normal module and let
+    # the standard machinery handle them (those set on the stub resolve via __dict__
+    # without reaching here) instead of attempting a bogus `worlds.__x__` import.
+    if name.startswith("__") and name.endswith("__"):
+        raise AttributeError(f"module 'worlds' has no attribute {name!r}")
     full = f"worlds.{name}"
     if full in sys.modules:
         mod = sys.modules[full]
