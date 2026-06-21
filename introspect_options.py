@@ -55,6 +55,9 @@ except ImportError:
 _worlds_stub = types.ModuleType("worlds")
 _worlds_stub.__path__ = [f"{ARCH_SRC}/worlds"]
 _worlds_stub.__package__ = "worlds"
+# Point at the real worlds/__init__.py so apworlds that resolve files relative to
+# `worlds.__file__` work (e.g. yugiohgx: os.path.dirname(worlds.__file__)/_bizhawk.apworld).
+_worlds_stub.__file__ = f"{ARCH_SRC}/worlds/__init__.py"
 sys.modules["worlds"] = _worlds_stub
 sys.path.insert(0, ARCH_SRC)
 
