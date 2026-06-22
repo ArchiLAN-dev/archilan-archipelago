@@ -37,6 +37,26 @@ from collections import Counter
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Protocol stdout isolation (must run before any AP/apworld import)
+# ---------------------------------------------------------------------------
+# This script speaks a strict newline-delimited JSON protocol on stdout: in --daemon mode
+# the bridge reads exactly one JSON line per message (ready, then one result per request).
+# AP core and third-party apworlds print() freely to stdout during world generation
+# (e.g. the Simpsons Hit and Run apworld prints "Getting UT slot data."), which corrupts
+# that protocol - the bridge reads the stray line as the ready/result line and reports
+# "Expecting value: line 1 column 1 (char 0)". Reserve the real stdout for the protocol via
+# _emit() and route every other write to stderr, which the bridge's frame demux ignores.
+_PROTOCOL_OUT = os.fdopen(os.dup(1), "w", buffering=1)
+sys.stdout = sys.stderr
+
+
+def _emit(obj: dict) -> None:
+    """Write one protocol JSON line to the reserved real stdout (apworld prints can't reach it)."""
+    _PROTOCOL_OUT.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    _PROTOCOL_OUT.flush()
+
+
+# ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
@@ -391,7 +411,7 @@ def main() -> None:
     slot = args.slot
     net_slot = slot_info.get(slot)
     if net_slot is None:
-        print(json.dumps({"error": f"slot {slot} not found"}), file=sys.stderr)
+        _emit({"error": f"slot {slot} not found"})
         sys.exit(1)
 
     game: str = net_slot.game
@@ -420,7 +440,7 @@ def main() -> None:
     if not yaml_candidates:
         yaml_candidates = list(Path(args.yamls).glob("*.yaml"))
     if not yaml_candidates:
-        print(json.dumps({"error": f"no yaml found in {args.yamls}"}), file=sys.stderr)
+        _emit({"error": f"no yaml found in {args.yamls}"})
         sys.exit(1)
     yaml_path = str(yaml_candidates[0])
 
@@ -432,7 +452,7 @@ def main() -> None:
         # "reachable daemon stream closed". Emit a structured error on stdout instead: in daemon
         # mode the bridge reads it as a non-ready line and reports it; in one-shot mode the bridge
         # extracts {"error": ...} from stdout. Either way the other slots keep working.
-        print(json.dumps({"error": f"reachability generation failed for {game}: {exc}"}), flush=True)
+        _emit({"error": f"reachability generation failed for {game}: {exc}"})
         sys.exit(1)
     # Prefer the session's own datapackage for ID→name resolution: it matches the IDs
     # in received_items exactly (same generation). The rebuilt world's item_id_to_name
@@ -563,7 +583,7 @@ def main() -> None:
         # Signal readiness, then serve requests from stdin indefinitely.
         # Request: {"checked_locations": [...], "received_items": [[id,sender,loc], ...]}\n
         # Response: {result JSON}\n
-        print(json.dumps({"ready": True}), flush=True)
+        _emit({"ready": True})
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -573,9 +593,9 @@ def main() -> None:
                 checked = set(req.get("checked_locations", []))
                 ri = req.get("received_items", [])
                 result = _compute(checked, ri)
-                print(json.dumps(result, ensure_ascii=False), flush=True)
+                _emit(result)
             except Exception as exc:
-                print(json.dumps({"error": str(exc)}), flush=True)
+                _emit({"error": str(exc)})
     else:
         # One-shot mode: read state from env var, stdin, or fall back to --apsave.
         checked_ids: set[int] = set()
@@ -606,7 +626,7 @@ def main() -> None:
             checked_ids = set(loc_checks.get(slot, set()))
             ri_map = _slot_map(save.get("received_items", {}))
             received_items = ri_map.get(slot, [])
-        print(json.dumps(_compute(checked_ids, received_items), ensure_ascii=False))
+        _emit(_compute(checked_ids, received_items))
 
 
 if __name__ == "__main__":
