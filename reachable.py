@@ -39,22 +39,15 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Protocol stdout isolation (must run before any AP/apworld import)
 # ---------------------------------------------------------------------------
-# This script speaks a strict newline-delimited JSON protocol on stdout: in --daemon mode
-# the bridge reads exactly one JSON line per message (ready, then one result per request).
-# AP core and third-party apworlds print() freely to stdout during world generation
-# (e.g. the Simpsons Hit and Run apworld prints "Getting UT slot data."), which corrupts
-# that protocol - the bridge reads the stray line as the ready/result line and reports
-# "Expecting value: line 1 column 1 (char 0)". Reserve the real stdout for the protocol via
-# _emit() and route every other write to stderr, which the bridge's frame demux ignores.
-_PROTOCOL_OUT = os.fdopen(os.dup(1), "w", buffering=1)
-sys.stdout = sys.stderr
+# This script speaks a strict newline-delimited JSON protocol on stdout: in --daemon mode the
+# bridge reads exactly one JSON line per message (ready, then one result per request). AP core
+# and third-party apworlds print() freely to stdout during world generation (e.g. the Simpsons
+# Hit and Run apworld prints "Getting UT slot data."), which would corrupt that protocol. The
+# protocol_io module reserves the real stdout for emit()-ed protocol lines and routes every
+# other write to stderr, which the bridge's frame demux ignores. See tests/test_protocol_io.py.
+from protocol_io import emit as _emit, isolate_stdout  # noqa: E402
 
-
-def _emit(obj: dict) -> None:
-    """Write one protocol JSON line to the reserved real stdout (apworld prints can't reach it)."""
-    _PROTOCOL_OUT.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    _PROTOCOL_OUT.flush()
-
+isolate_stdout()
 
 # ---------------------------------------------------------------------------
 # Paths

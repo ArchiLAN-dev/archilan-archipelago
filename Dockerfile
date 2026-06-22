@@ -56,6 +56,7 @@ COPY generate_template.py /usr/local/bin/generate_template.py
 COPY introspect_options.py /usr/local/bin/introspect_options.py
 COPY generate_multiworld.py /usr/local/bin/generate_multiworld.py
 COPY reachable.py /reachable/reachable.py
+COPY protocol_io.py /reachable/protocol_io.py
 COPY read_save.py /readsave/read_save.py
 COPY ap_server.sh /ap_server.sh
 COPY entrypoint.sh /entrypoint.sh
@@ -69,6 +70,7 @@ RUN for f in /usr/local/bin/generate_template.py \
              /usr/local/bin/introspect_options.py \
              /usr/local/bin/generate_multiworld.py \
              /reachable/reachable.py \
+             /reachable/protocol_io.py \
              /readsave/read_save.py \
              /ap_server.sh \
              /entrypoint.sh; do \
