@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-Introspect Archipelago apworld option types and emit JSON to stdout.
+Introspect Archipelago apworld option types + location names and emit JSON to stdout.
 
 Output: {"options": {"option_key": {"type": "range|choice|toggle|text|weights",
-                                    "defaultWeights": {key: int}}}}
+                                    "defaultWeights": {key: int}}},
+         "locations": ["Location Name", ...]}
 
 "defaultWeights" is only present for "weights" (OptionDict) options.
+"locations" is the STATIC location list (the World class's location_name_to_id keys) -
+options-dependent locations are not reflected, so consumers treat it as a hint.
 """
 import argparse
 import atexit
@@ -311,4 +314,15 @@ if hasattr(world_cls, "options_dataclass") and world_cls.options_dataclass is no
 
         result[field.name] = entry
 
-print(json.dumps({"options": result}))
+# ── Extract location names (static list from the World class) ──────────────────
+# location_name_to_id maps every network-addressable check to its id; its keys are
+# the canonical location names used by priority_locations / exclude_locations /
+# start_location_hints. This is the *static* list: options-dependent checks are not
+# reflected here, so consumers must treat it as a suggestion hint, not a source of truth.
+try:
+    _loc_map = getattr(world_cls, "location_name_to_id", None) or {}
+    locations = sorted(str(name) for name in _loc_map.keys())
+except Exception:
+    locations = []
+
+print(json.dumps({"options": result, "locations": locations}))
