@@ -19,6 +19,7 @@ Outputs JSON to stdout:
 from __future__ import annotations
 
 import argparse
+import atexit
 import importlib.abc
 import importlib.machinery
 import json
@@ -26,7 +27,10 @@ import json as _json
 import logging
 import pathlib
 import pickle
+import re
+import shutil
 import sys
+import tempfile
 import types
 import warnings
 import zipfile
@@ -214,6 +218,27 @@ logging.basicConfig(level=logging.ERROR)  # suppress AP generator noise
 # Apworld loading (mirrors generate_multiworld.py)
 # ---------------------------------------------------------------------------
 
+def _sanitize_pkg_name(name: str) -> str:
+    """A Python-importable name for an apworld folder that is not one (e.g. "Twilight Princess")."""
+    sanitized = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    if sanitized and sanitized[0].isdigit():
+        sanitized = "_" + sanitized
+    return sanitized
+
+
+def _detect_pkg(entries: list[str]) -> str | None:
+    """The apworld's package folder: the one holding __init__.py, else the first entry's root."""
+    for entry in entries:
+        parts = entry.replace("\\", "/").split("/")
+        if len(parts) == 2 and parts[1] == "__init__.py" and parts[0]:
+            return parts[0]
+    for entry in entries:
+        root = entry.replace("\\", "/").split("/")[0]
+        if root:
+            return root
+    return None
+
+
 def _load_apworlds_from(apworld_dir: pathlib.Path) -> None:
     if not apworld_dir.is_dir():
         return
@@ -221,21 +246,48 @@ def _load_apworlds_from(apworld_dir: pathlib.Path) -> None:
         try:
             with zipfile.ZipFile(str(apw)) as zf:
                 entries = zf.namelist()
-                pkg = entries[0].split("/")[0] if entries else None
+            raw_pkg = _detect_pkg(entries)
         except Exception as e:
             print(f"Warning: could not inspect {apw.name}: {e}", file=sys.stderr)
             continue
+        if not raw_pkg:
+            print(f"Warning: skipping {apw.name}: could not detect package name", file=sys.stderr)
+            continue
+
+        # An apworld may ship its sources under a display-name folder that is not a valid Python
+        # identifier ("Twilight Princess"). Such a package cannot be zipimported under that name, so
+        # extract it and rename the folder - exactly what generate_multiworld.py does. Skipping it
+        # instead (the previous behaviour) silently left the world unregistered, and the reachability
+        # pass then died with "No world found to handle game Twilight Princess" while generation,
+        # which does sanitize, worked fine (issue #278).
+        pkg = raw_pkg if raw_pkg.isidentifier() else _sanitize_pkg_name(raw_pkg)
         if not pkg or not pkg.isidentifier():
-            print(f"Warning: skipping {apw.name}: invalid package name", file=sys.stderr)
+            print(f"Warning: skipping {apw.name}: invalid package name '{raw_pkg}'", file=sys.stderr)
             continue
         mod = f"worlds.{pkg}"
         if mod in sys.modules:
             continue
-        _worlds_pkg.__path__.append(str(apw))
+
+        tmp_dir = tempfile.mkdtemp(prefix="apworld_")
+        atexit.register(shutil.rmtree, tmp_dir, True)
         try:
+            with zipfile.ZipFile(str(apw)) as zf:
+                for member in zf.infolist():
+                    member.filename = member.filename.replace("\\", "/")
+                    zf.extract(member, tmp_dir)
+            if raw_pkg != pkg:
+                raw_dir = os.path.join(tmp_dir, raw_pkg)
+                if os.path.isdir(raw_dir):
+                    os.rename(raw_dir, os.path.join(tmp_dir, pkg))
+            # Bundled top-level deps sit at the zip root, so expose it on sys.path too.
+            sys.path.insert(0, tmp_dir)
+            _worlds_pkg.__path__.append(tmp_dir)
             importlib.import_module(mod)
         except Exception as e:
-            _worlds_pkg.__path__.remove(str(apw))
+            if tmp_dir in _worlds_pkg.__path__:
+                _worlds_pkg.__path__.remove(tmp_dir)
+            if tmp_dir in sys.path:
+                sys.path.remove(tmp_dir)
             print(f"Warning: failed to load {apw.name} ({pkg}): {e}", file=sys.stderr)
 
 
