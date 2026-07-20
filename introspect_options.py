@@ -18,6 +18,7 @@ import importlib.machinery
 import json
 import os
 import pathlib
+import re
 import shutil
 import sys
 import tempfile
@@ -167,21 +168,50 @@ sys.meta_path.append(_AutoStubFinder())
 
 # ── Load custom apworld ───────────────────────────────────────────────────────
 
+def _sanitize_pkg_name(name: str) -> str:
+    """A Python-importable name for an apworld folder that is not one (e.g. "Twilight Princess")."""
+    sanitized = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    if sanitized and sanitized[0].isdigit():
+        sanitized = "_" + sanitized
+    return sanitized
+
+
+def _detect_pkg(entries: list[str]) -> str | None:
+    """The apworld's package folder: the one holding __init__.py, else the first entry's root."""
+    for entry in entries:
+        parts = entry.replace("\\", "/").split("/")
+        if len(parts) == 2 and parts[1] == "__init__.py" and parts[0]:
+            return parts[0]
+    for entry in entries:
+        root = entry.replace("\\", "/").split("/")[0]
+        if root:
+            return root
+    return None
+
+
 _loaded_pkg_names: list[str] = []
 
 for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
     try:
         with zipfile.ZipFile(str(_apw)) as zf:
             entries = zf.namelist()
-            if not entries:
-                continue
-            pkg_name = entries[0].split("/")[0]
+        if not entries:
+            continue
+        raw_pkg_name = _detect_pkg(entries)
     except Exception as exc:
         print(f"Warning: could not inspect {_apw.name}: {exc}", file=sys.stderr)
         continue
 
+    if not raw_pkg_name:
+        print(f"Warning: skipping {_apw.name}: could not detect package name", file=sys.stderr)
+        continue
+
+    # An apworld may ship its sources under a display-name folder that is not a valid Python
+    # identifier ("Twilight Princess"). Sanitize and rename it below instead of skipping, so its
+    # option types and location list are introspected like any other world (issue #278).
+    pkg_name = raw_pkg_name if raw_pkg_name.isidentifier() else _sanitize_pkg_name(raw_pkg_name)
     if not pkg_name or not pkg_name.isidentifier():
-        print(f"Warning: skipping {_apw.name}: invalid package name '{pkg_name}'", file=sys.stderr)
+        print(f"Warning: skipping {_apw.name}: invalid package name '{raw_pkg_name}'", file=sys.stderr)
         continue
 
     world_mod_name = f"worlds.{pkg_name}"
@@ -192,6 +222,10 @@ for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
     atexit.register(shutil.rmtree, _tmp_dir, True)
     with zipfile.ZipFile(str(_apw)) as _zf:
         _zf.extractall(_tmp_dir)
+    if raw_pkg_name != pkg_name:
+        _raw_dir = os.path.join(_tmp_dir, raw_pkg_name)
+        if os.path.isdir(_raw_dir):
+            os.rename(_raw_dir, os.path.join(_tmp_dir, pkg_name))
 
     _worlds_stub.__path__.insert(0, _tmp_dir)
     try:
