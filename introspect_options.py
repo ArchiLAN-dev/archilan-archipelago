@@ -43,10 +43,18 @@ _winapi_stub.__getattr__ = lambda name: 0  # type: ignore[method-assign]
 sys.modules["_winapi"] = _winapi_stub
 
 import json as _json
-_orjson = types.ModuleType("orjson")
-_orjson.loads = _json.loads  # type: ignore[attr-defined]
-_orjson.dumps = lambda obj, **kw: _json.dumps(obj, default=str).encode()  # type: ignore[attr-defined]
-sys.modules["orjson"] = _orjson
+# orjson: use real package if installed; fall back to stdlib shim if not.
+# Patch orjson.orjson = orjson so `from orjson import orjson` works regardless
+# (the Rust extension doesn't expose itself as an attribute).
+try:
+    import orjson as _orjson  # noqa: F401
+except ImportError:
+    _orjson = types.ModuleType("orjson")
+    _orjson.loads = _json.loads  # type: ignore[attr-defined]
+    _orjson.dumps = lambda obj, **kw: _json.dumps(obj, default=str).encode()  # type: ignore[attr-defined]
+    sys.modules["orjson"] = _orjson
+if not hasattr(_orjson, "orjson"):
+    _orjson.orjson = _orjson  # type: ignore[attr-defined]
 
 try:
     import pkg_resources  # noqa: F401
