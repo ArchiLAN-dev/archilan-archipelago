@@ -322,10 +322,15 @@ if __name__ == "__main__":
                 text=True,
             )
             if result.returncode != 0:
-                print(
-                    f"Warning: pip install failed for {pkg_name}: {result.stderr.strip()}",
-                    file=sys.stderr,
-                )
+                # The container is sealed (PIP_NO_INDEX=1 in the image): optional
+                # play-time deps can never install there, so failure is the norm and
+                # not worth logging. A world whose gen-time deps are truly missing
+                # still surfaces through the "failed to load" warning at import.
+                if not os.environ.get("PIP_NO_INDEX"):
+                    print(
+                        f"Warning: pip install failed for {pkg_name}: {result.stderr.strip()}",
+                        file=sys.stderr,
+                    )
                 return
             with open(candidate, encoding="utf-8") as f:
                 installed = {
