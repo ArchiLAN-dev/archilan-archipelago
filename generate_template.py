@@ -291,10 +291,15 @@ def _install_apworld_requirements(tmp_dir: str, pkg_name: str) -> None:
             text=True,
         )
         if result.returncode != 0:
-            print(
-                f"Warning: pip install failed for {pkg_name}: {result.stderr.strip()}",
-                file=sys.stderr,
-            )
+            # The container is sealed (PIP_NO_INDEX=1 in the image): optional
+            # play-time deps can never install there, so failure is the norm and
+            # not worth logging. A world whose gen-time deps are truly missing
+            # still surfaces through the "failed to load" warning at import.
+            if not os.environ.get("PIP_NO_INDEX"):
+                print(
+                    f"Warning: pip install failed for {pkg_name}: {result.stderr.strip()}",
+                    file=sys.stderr,
+                )
             return
         # Make transitive deps of the installed packages importable as top-level.
         if pkg_dir not in sys.path:
