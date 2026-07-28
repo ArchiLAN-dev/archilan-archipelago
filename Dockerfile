@@ -5,6 +5,12 @@ FROM python:3.13-slim
 
 ARG ARCHIPELAGO_VERSION
 
+# An HTTP intermediary between the Docker VM and deb.debian.org misaligns apt's pipelined
+# responses (the wrong file comes back for a request and apt fails on hash mismatch, e.g.
+# "Hashes of received file" with a 21 MB body where 1.4 kB were expected). Disabling
+# pipelining makes each response match its request.
+RUN echo 'Acquire::http::Pipeline-Depth "0";' > /etc/apt/apt.conf.d/99no-pipeline
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     tar \
