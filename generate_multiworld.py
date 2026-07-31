@@ -450,8 +450,50 @@ if __name__ == "__main__":
     except Exception as _e:
         print(f"Warning: host-gate derivation skipped: {_e}", file=sys.stderr)
 
-    erargs, seed = Generate.main()
-    ERmain(erargs, seed)
+    # ─── Structured failure record (story 9.43) ──────────────────────────────
+    # The orchestrator captures stderr and the central API turns it into the message a
+    # player sees. Screen-scraping a traceback is fragile: a long single-line message gets
+    # cut by the stderr tail (its head, where the meaning is, is the part that disappears)
+    # and a decorated multi-line message loses its `Type:` header. Since this script IS the
+    # emitter, we print one compact machine-readable line as the LAST thing on stderr and
+    # let the API read that. The full traceback is still printed above it for the admin log,
+    # and the API keeps its text heuristics as a fallback (older images, or a crash that
+    # kills the interpreter before this handler runs).
+    FAILURE_SENTINEL = "###ARCHILAN-FAILURE###"
+    FAILURE_MESSAGE_MAX = 1200
+
+    def _emit_failure(exc: Exception) -> None:
+        import re as _re
+        import traceback as _tb
+
+        _tb.print_exc()
+
+        # Whitespace-normalized so a decorated multi-line message survives as one line.
+        record = {
+            "type": type(exc).__name__,
+            "message": " ".join(str(exc).split())[:FAILURE_MESSAGE_MAX],
+        }
+        # PEP 678 notes: AutoWorld.call_single attaches "Exception in <bound method
+        # World.hook of <worlds.pkg.World object ...>> for player N, named SLOT." - the
+        # authoritative slot attribution, no regex on the traceback needed downstream.
+        for _note in getattr(exc, "__notes__", None) or []:
+            _m = _re.search(r"for player (\d+), named (\S+?)\.\s*$", _note)
+            if _m:
+                record["player"] = int(_m.group(1))
+                record["slot"] = _m.group(2)
+            _m = _re.search(r"worlds\.([A-Za-z0-9_]+)\.", _note)
+            if _m:
+                record["world"] = _m.group(1)
+
+        print(f"{FAILURE_SENTINEL} {_json.dumps(record, ensure_ascii=False)}",
+              file=sys.stderr, flush=True)
+
+    try:
+        erargs, seed = Generate.main()
+        ERmain(erargs, seed)
+    except Exception as _exc:
+        _emit_failure(_exc)
+        sys.exit(1)
 
     # Print the generated output filename to stdout for the orchestrator to capture.
     _out_dir = pathlib.Path(getattr(erargs, "outputpath", "/data/output"))
