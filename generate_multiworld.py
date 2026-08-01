@@ -10,8 +10,6 @@ Stubs out client-only third-party C extensions that apworlds import at module
 level but are never needed server-side (dolphin_memory_engine, gclib, …).
 """
 import atexit
-import importlib.abc
-import importlib.machinery
 import json as _json
 import os
 import pathlib
@@ -82,98 +80,11 @@ _worlds_stub.__path__ = [f"{ARCH_SRC}/worlds"]
 _worlds_stub.__package__ = "worlds"
 sys.modules["worlds"] = _worlds_stub
 
-# ─── Auto-stub: silence client-only third-party imports ──────────────────────
-_ARCHIP_ROOTS = frozenset({
-    "BaseClasses",
-    "entrance_rando",
-    "Fill",
-    "Generate",
-    "Main",
-    "MultiServer",
-    "NetUtils",
-    "Options",
-    "Patch",
-    "settings",
-    "Utils",
-    "WebHost",
-    "worlds",
-})
-
-
-class _Stub:
-    def __getattr__(self, _n): return _Stub()
-    def __call__(self, *a, **kw): return _Stub()
-    def __mro_entries__(self, bases): return (object,)
-    def __getitem__(self, key): return _Stub()
-    def __setitem__(self, key, value): pass
-    def __delitem__(self, key): pass
-    def __contains__(self, item): return False
-    def __neg__(self): return _Stub()
-    def __pos__(self): return _Stub()
-    def __abs__(self): return _Stub()
-    def __invert__(self): return _Stub()
-    def __add__(self, o): return _Stub()
-    def __radd__(self, o): return _Stub()
-    def __sub__(self, o): return _Stub()
-    def __rsub__(self, o): return _Stub()
-    def __mul__(self, o): return _Stub()
-    def __rmul__(self, o): return _Stub()
-    def __truediv__(self, o): return _Stub()
-    def __rtruediv__(self, o): return _Stub()
-    def __floordiv__(self, o): return _Stub()
-    def __rfloordiv__(self, o): return _Stub()
-    def __mod__(self, o): return _Stub()
-    def __rmod__(self, o): return _Stub()
-    def __pow__(self, o, m=None): return _Stub()
-    def __rpow__(self, o): return _Stub()
-    def __matmul__(self, o): return _Stub()
-    def __rmatmul__(self, o): return _Stub()
-    def __and__(self, o): return _Stub()
-    def __rand__(self, o): return _Stub()
-    def __or__(self, o): return _Stub()
-    def __ror__(self, o): return _Stub()
-    def __xor__(self, o): return _Stub()
-    def __rxor__(self, o): return _Stub()
-    def __lshift__(self, o): return _Stub()
-    def __rlshift__(self, o): return _Stub()
-    def __rshift__(self, o): return _Stub()
-    def __rrshift__(self, o): return _Stub()
-    def __lt__(self, o): return False
-    def __le__(self, o): return False
-    def __gt__(self, o): return False
-    def __ge__(self, o): return False
-    def __eq__(self, o): return isinstance(o, _Stub)
-    def __ne__(self, o): return not isinstance(o, _Stub)
-    def __bool__(self): return False
-    def __int__(self): return 0
-    def __float__(self): return 0.0
-    def __complex__(self): return 0j
-    def __index__(self): return 0
-    def __str__(self): return ""
-    def __repr__(self): return "stub"
-    def __bytes__(self): return b""
-    def __hash__(self): return 0
-    def __iter__(self): return iter([])
-    def __len__(self): return 0
-    def items(self): return {}.items()
-    def values(self): return {}.values()
-    def keys(self): return {}.keys()
-
-
-class _AutoStubFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
-    def find_spec(self, fullname: str, path, target=None):
-        if fullname.split(".")[0] in _ARCHIP_ROOTS:
-            return None
-        return importlib.machinery.ModuleSpec(fullname, self)
-
-    def create_module(self, spec):
-        return types.ModuleType(spec.name)
-
-    def exec_module(self, module):
-        module.__getattr__ = lambda _n: _Stub()
-
-
-sys.meta_path.append(_AutoStubFinder())
+# ─── World imports: honest first, stub only what is truly missing ────────────
+# See apworld_import.py: nothing is stubbed up front, so a world that ships its own
+# fallback for a missing dependency takes it. Only a module proven missing by a failed
+# import gets stubbed, and only for the retry.
+from apworld_import import import_world  # noqa: E402
 
 
 def _sanitize_pkg_name(name: str) -> str:
@@ -184,9 +95,15 @@ def _sanitize_pkg_name(name: str) -> str:
     return sanitized
 
 
-# Populate the worlds stub now that _AutoStubFinder is in place so transitive
-# imports from AutoWorld.py are stubbed correctly.
-from worlds.AutoWorld import AutoWorldRegister, World  # noqa: E402
+# Populate the worlds stub. AutoWorld.py pulls in a few third-party modules; route it
+# through the same honest-first loader so a missing one is stubbed on demand instead of
+# taking the whole generator down.
+_autoworld = import_world(
+    "worlds.AutoWorld",
+    on_stub=lambda name: print(f"Note: stubbed missing module '{name}' for worlds.AutoWorld", file=sys.stderr),
+)
+AutoWorldRegister = _autoworld.AutoWorldRegister
+World = _autoworld.World
 _worlds_stub.AutoWorldRegister = AutoWorldRegister
 _worlds_stub.World = World
 _worlds_stub.local_folder = f"{ARCH_SRC}/worlds"
@@ -390,7 +307,11 @@ if __name__ == "__main__":
             sys.path.insert(0, _tmp_dir)
             _worlds_pkg.__path__.append(_tmp_dir)
             try:
-                importlib.import_module(_mod)
+                import_world(
+                    _mod,
+                    on_stub=lambda name, apw=_apw.name: print(
+                        f"Note: stubbed missing module '{name}' for {apw}", file=sys.stderr),
+                )
             except Exception as _e:
                 _worlds_pkg.__path__.remove(_tmp_dir)
                 sys.path.remove(_tmp_dir)
