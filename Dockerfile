@@ -61,6 +61,9 @@ ENV PIP_NO_INDEX=1 \
 COPY generate_template.py /usr/local/bin/generate_template.py
 COPY introspect_options.py /usr/local/bin/introspect_options.py
 COPY generate_multiworld.py /usr/local/bin/generate_multiworld.py
+# Shared world-import machinery. Installed in site-packages so every script in the image
+# can import it, whatever directory it runs from (/usr/local/bin, /reachable, …).
+COPY apworld_import.py /usr/local/lib/python3.13/site-packages/apworld_import.py
 COPY reachable.py /reachable/reachable.py
 COPY protocol_io.py /reachable/protocol_io.py
 COPY read_save.py /readsave/read_save.py
@@ -75,6 +78,7 @@ COPY entrypoint.sh /entrypoint.sh
 RUN for f in /usr/local/bin/generate_template.py \
              /usr/local/bin/introspect_options.py \
              /usr/local/bin/generate_multiworld.py \
+             /usr/local/lib/python3.13/site-packages/apworld_import.py \
              /reachable/reachable.py \
              /reachable/protocol_io.py \
              /readsave/read_save.py \

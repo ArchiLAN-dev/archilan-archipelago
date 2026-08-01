@@ -94,10 +94,9 @@ _orjson.dumps = lambda obj, **kw: _json.dumps(obj, default=str).encode()  # type
 sys.modules["orjson"] = _orjson
 
 # pkg_resources: setuptools 71+ no longer ships it as a standalone top-level package. Pre-populate
-# sys.modules from pip's vendored copy *before* the auto-stub finder below registers, so apworlds
-# that call pkg_resources.resource_listdir() (e.g. pokemon_emerald, to enumerate its
-# data/regions/*.json) get the real implementation. Otherwise the auto-stub answers the import with
-# an empty _Stub, resource_listdir() yields zero region files, and the world crashes at import with
+# sys.modules from pip's vendored copy so apworlds that call pkg_resources.resource_listdir()
+# (e.g. pokemon_emerald, to enumerate its data/regions/*.json) get the real implementation. With a
+# stub instead, resource_listdir() yields zero region files and the world crashes at import with
 # KeyError: 'POKEDEX_REWARD_001'. Mirrors generate_template.py / introspect_options.py.
 try:
     import pkg_resources  # noqa: F401 - real implementation when setuptools < 71
@@ -106,99 +105,13 @@ except ImportError:
     sys.modules["pkg_resources"] = _pr
 
 # ---------------------------------------------------------------------------
-# Auto-stub: silence client-only third-party imports (mirrors generate_multiworld.py)
+# World imports (mirrors generate_multiworld.py)
 # ---------------------------------------------------------------------------
 
-_ARCHIP_ROOTS = frozenset({
-    "BaseClasses",
-    "entrance_rando",
-    "Fill",
-    "Generate",
-    "Main",
-    "MultiServer",
-    "NetUtils",
-    "Options",
-    "Patch",
-    "settings",
-    "Utils",
-    "WebHost",
-    "worlds",
-})
-
-
-class _Stub:
-    def __getattr__(self, _n): return _Stub()
-    def __call__(self, *a, **kw): return _Stub()
-    def __getitem__(self, key): return _Stub()
-    def __setitem__(self, key, value): pass
-    def __delitem__(self, key): pass
-    def __contains__(self, item): return False
-    def __neg__(self): return _Stub()
-    def __pos__(self): return _Stub()
-    def __abs__(self): return _Stub()
-    def __invert__(self): return _Stub()
-    def __add__(self, o): return _Stub()
-    def __radd__(self, o): return _Stub()
-    def __sub__(self, o): return _Stub()
-    def __rsub__(self, o): return _Stub()
-    def __mul__(self, o): return _Stub()
-    def __rmul__(self, o): return _Stub()
-    def __truediv__(self, o): return _Stub()
-    def __rtruediv__(self, o): return _Stub()
-    def __floordiv__(self, o): return _Stub()
-    def __rfloordiv__(self, o): return _Stub()
-    def __mod__(self, o): return _Stub()
-    def __rmod__(self, o): return _Stub()
-    def __pow__(self, o, m=None): return _Stub()
-    def __rpow__(self, o): return _Stub()
-    def __matmul__(self, o): return _Stub()
-    def __rmatmul__(self, o): return _Stub()
-    def __and__(self, o): return _Stub()
-    def __rand__(self, o): return _Stub()
-    def __or__(self, o): return _Stub()
-    def __ror__(self, o): return _Stub()
-    def __xor__(self, o): return _Stub()
-    def __rxor__(self, o): return _Stub()
-    def __lshift__(self, o): return _Stub()
-    def __rlshift__(self, o): return _Stub()
-    def __rshift__(self, o): return _Stub()
-    def __rrshift__(self, o): return _Stub()
-    def __lt__(self, o): return False
-    def __le__(self, o): return False
-    def __gt__(self, o): return False
-    def __ge__(self, o): return False
-    def __eq__(self, o): return isinstance(o, _Stub)
-    def __ne__(self, o): return not isinstance(o, _Stub)
-    def __bool__(self): return False
-    def __int__(self): return 0
-    def __float__(self): return 0.0
-    def __complex__(self): return 0j
-    def __index__(self): return 0
-    def __str__(self): return ""
-    def __repr__(self): return "stub"
-    def __bytes__(self): return b""
-    def __hash__(self): return 0
-    def __iter__(self): return iter([])
-    def __len__(self): return 0
-    def items(self): return {}.items()
-    def values(self): return {}.values()
-    def keys(self): return {}.keys()
-
-
-class _AutoStubFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
-    def find_spec(self, fullname: str, path, target=None):
-        if fullname.split(".")[0] in _ARCHIP_ROOTS:
-            return None
-        return importlib.machinery.ModuleSpec(fullname, self)
-
-    def create_module(self, spec):
-        return types.ModuleType(spec.name)
-
-    def exec_module(self, module):
-        module.__getattr__ = lambda _n: _Stub()
-
-
-sys.meta_path.append(_AutoStubFinder())
+# Honest first, stub only what is truly missing - see apworld_import.py. Keeping the same
+# loader as the generator matters: a world that loads for generation must load here too,
+# or its reachability goes silently missing.
+from apworld_import import import_world  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # AP imports (after stubs and sys.path setup)
@@ -282,7 +195,11 @@ def _load_apworlds_from(apworld_dir: pathlib.Path) -> None:
             # Bundled top-level deps sit at the zip root, so expose it on sys.path too.
             sys.path.insert(0, tmp_dir)
             _worlds_pkg.__path__.append(tmp_dir)
-            importlib.import_module(mod)
+            import_world(
+                mod,
+                on_stub=lambda name, a=apw.name: print(
+                    f"Note: stubbed missing module '{name}' for {a}", file=sys.stderr),
+            )
         except Exception as e:
             if tmp_dir in _worlds_pkg.__path__:
                 _worlds_pkg.__path__.remove(tmp_dir)
