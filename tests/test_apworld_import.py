@@ -83,6 +83,25 @@ _FLAKY_WORLD = textwrap.dedent(
     """
 )
 
+# A world tripping on a module that EXISTS but cannot be loaded. Stand-in for _tkinter,
+# which ships in the image without its libtk8.6.so: the import does not fail because Python
+# cannot find the module, it fails while loading it, so a stub finder sitting at the end of
+# sys.meta_path is never reached and the retry hits the very same error.
+_BROKEN_DEPENDENCY = textwrap.dedent(
+    """
+    raise ImportError("libfake8.6.so: cannot open shared object file: No such file or "
+                      "directory", name="broken_native_dependency")
+    """
+)
+
+_TKINTER_LIKE_WORLD = textwrap.dedent(
+    """
+    import broken_native_dependency  # noqa: F401  - present on disk, unloadable
+
+    GAME = "Tk World"
+    """
+)
+
 # Same shape, but the failure is not an ImportError and no stubbing can rescue it.
 _BROKEN_WORLD = textwrap.dedent(
     """
@@ -104,6 +123,8 @@ _HARNESS = textwrap.dedent(
 
     repo_root, tmp_dir, world_source = sys.argv[1], sys.argv[2], sys.argv[3]
     sys.path.insert(0, repo_root)
+    # The real loaders expose the extracted apworld root on sys.path for its bundled deps.
+    sys.path.insert(0, tmp_dir)
 
     # Pre-load the modules holding the registries, as an earlier world would have done.
     # Surviving the rollback is precisely what makes their leftovers dangerous.
@@ -140,11 +161,13 @@ _HARNESS = textwrap.dedent(
 )
 
 
-def _run(tmp_path, world_module: str, world_body: str) -> dict:
+def _run(tmp_path, world_module: str, world_body: str, extra_modules: dict | None = None) -> dict:
     """Import `world_module` through import_world in a subprocess, return the registry state."""
     package_dir = tmp_path / world_module.split(".")[-1]
     package_dir.mkdir()
     (package_dir / "__init__.py").write_text(world_body, encoding="utf-8")
+    for name, body in (extra_modules or {}).items():
+        (tmp_path / f"{name}.py").write_text(body, encoding="utf-8")
 
     base_classes = tmp_path / "_fake_base_classes.py"
     base_classes.write_text(_FAKE_BASE_CLASSES, encoding="utf-8")
@@ -172,6 +195,18 @@ def test_stub_retry_does_not_collide_with_its_own_leftovers(tmp_path):
     # The logic mixin grafted itself onto CollectionState exactly once.
     assert state["mixin_attrs"] == ["_flaky_has_gem"]
     assert state["init_functions"] == 1
+
+
+def test_dependency_that_exists_but_cannot_load_is_stubbed(tmp_path):
+    """The _tkinter case: unloadable is as stubbable as absent, or the world is lost."""
+    state = _run(
+        tmp_path,
+        "worlds.tk_world",
+        _TKINTER_LIKE_WORLD,
+        extra_modules={"broken_native_dependency": _BROKEN_DEPENDENCY},
+    )
+
+    assert state["error"] is None
 
 
 def test_non_import_failure_leaves_the_registries_untouched(tmp_path):
