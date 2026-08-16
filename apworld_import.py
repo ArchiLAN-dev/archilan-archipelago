@@ -17,6 +17,10 @@ import fails on a genuinely missing module do we stub THAT module and retry. Eve
 converges to its own minimal stub set, recomputed at load time - there is no list to
 maintain, a world that ships a fallback takes it, and a new client-only dependency added
 upstream tomorrow is handled without touching this file.
+
+Retrying an import is only safe if the failed attempt left nothing behind: Archipelago's
+registries are written from class bodies, so a second execution of the same module collides
+with its own leftovers. See _REGISTRY_PATHS.
 """
 import importlib
 import importlib.abc
@@ -138,22 +142,73 @@ finder = OnDemandStubFinder()
 sys.meta_path.append(finder)
 
 
-def _world_types():
-    """AutoWorldRegister.world_types once the worlds package exists, else None."""
-    registry = getattr(sys.modules.get("worlds"), "AutoWorldRegister", None)
-    return getattr(registry, "world_types", None)
+# Archipelago registers a world's classes as a side effect of *executing* its module: the
+# class body of a World, of a patch container or of a logic mixin writes itself into a
+# global registry the moment it runs. A failed attempt therefore leaves entries behind, and
+# because the retry re-executes those very class bodies it collides with its own leftovers:
+# AutoPatchRegister raises "Two auto patch containers are using the same file extension",
+# AutoLogicRegister raises "Name conflict on Logic Mixin", AutoWorldRegister raises
+# "already registered". None of those is an ImportError, so the world dies on the retry for
+# a reason that has nothing to do with the dependency that made it stumble.
+#
+# Only a registry reachable through a module that *survives* the rollback can leak: whatever
+# was imported during the attempt is dropped from sys.modules and takes its registries with
+# it. Hence the confusing symptom this guards against - a world loads fine on its own (it
+# imported worlds.Files itself, so its leftovers died with the module) and fails as soon as
+# another patching world loaded worlds.Files before it.
+_REGISTRY_PATHS = (
+    ("worlds", "AutoWorldRegister", "world_types"),
+    ("worlds.AutoWorld", "AutoWorldRegister", "world_types"),
+    ("worlds.Files", "AutoPatchRegister", "patch_types"),
+    ("worlds.Files", "AutoPatchRegister", "file_endings"),
+    ("worlds.Files", "AutoPatchExtensionRegister", "extension_types"),
+    ("worlds.LauncherComponents", None, "components"),
+    ("BaseClasses", "CollectionState", "additional_init_functions"),
+    ("BaseClasses", "CollectionState", "additional_copy_functions"),
+)
 
 
-def _rollback(module_names, world_games):
+def _registry(module_name, owner_attr, registry_attr):
+    """The live dict/list behind a (module, class, attribute) path, or None if not loaded."""
+    owner = sys.modules.get(module_name)
+    if owner is not None and owner_attr is not None:
+        owner = getattr(owner, owner_attr, None)
+    container = getattr(owner, registry_attr, None)
+    return container if isinstance(container, (dict, list)) else None
+
+
+def _collection_state():
+    """BaseClasses.CollectionState, onto which logic mixins graft their methods."""
+    return getattr(sys.modules.get("BaseClasses"), "CollectionState", None)
+
+
+def _snapshot():
+    """Capture what an import attempt may mutate, so a failure can be undone completely."""
+    containers, seen = [], set()
+    for path in _REGISTRY_PATHS:
+        container = _registry(*path)
+        # The same dict is reachable through several paths (worlds/worlds.AutoWorld).
+        if container is not None and id(container) not in seen:
+            seen.add(id(container))
+            containers.append((container, container.copy()))
+    state = _collection_state()
+    return set(sys.modules), containers, state, None if state is None else set(vars(state))
+
+
+def _rollback(snapshot):
     """Undo everything a failed import attempt left behind before retrying."""
+    module_names, containers, state, state_attrs = snapshot
     for name in [n for n in sys.modules if n not in module_names]:
         del sys.modules[name]
-    world_types = _world_types()
-    if world_types is not None and world_games is not None:
-        # A world class registers itself as soon as its class body runs, so a partial
-        # import can leave a half-built world in the registry.
-        for game in [g for g in world_types if g not in world_games]:
-            del world_types[game]
+    for container, saved in containers:
+        container.clear()
+        if isinstance(container, dict):
+            container.update(saved)
+        else:
+            container.extend(saved)
+    if state_attrs is not None:
+        for name in set(vars(state)) - state_attrs:
+            delattr(state, name)
 
 
 def import_world(module_name, on_stub=None):
@@ -165,16 +220,14 @@ def import_world(module_name, on_stub=None):
     """
     honest = True
     for _ in range(MAX_STUB_ROUNDS):
-        module_names = set(sys.modules)
-        world_types = _world_types()
-        world_games = set(world_types) if world_types is not None else None
+        snapshot = _snapshot()
 
         finder.enabled = not honest
         try:
             return importlib.import_module(module_name)
         except ImportError as exc:
             missing = (getattr(exc, "name", None) or "").split(".")[0]
-            _rollback(module_names, world_games)
+            _rollback(snapshot)
 
             if not missing or missing in ARCHIP_ROOTS:
                 raise
@@ -189,6 +242,12 @@ def import_world(module_name, on_stub=None):
             honest = False
             if on_stub is not None:
                 on_stub(missing)
+        except Exception:
+            # A world can also die on something that is not an ImportError (a broken class
+            # body, a stubbed value used at import time). Undo its half-registration too,
+            # so one unloadable world cannot poison the ones loaded after it.
+            _rollback(snapshot)
+            raise
         finally:
             # Lazy imports performed later (at generation time) still get their stubs.
             finder.enabled = True
