@@ -13,7 +13,8 @@ base class of its data models (``__mro_entries__`` returns ``object``, so the cl
 its ``__init__``) and died on ``TypeError: RoutingInfo() takes no arguments``.
 
 So: import with no stubbing at all, exactly like desktop Archipelago, and only when the
-import fails on a genuinely missing module do we stub THAT module and retry. Every world
+import fails on a module this container cannot provide - absent, or present but unloadable
+for want of a shared library - do we stub THAT module and retry. Every world
 converges to its own minimal stub set, recomputed at load time - there is no list to
 maintain, a world that ships a fallback takes it, and a new client-only dependency added
 upstream tomorrow is handled without touching this file.
@@ -114,10 +115,18 @@ class Stub:
 
 
 class OnDemandStubFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
-    """Stubs only the module roots the retry loop proved missing, and only when enabled.
+    """Stubs only the module roots the retry loop proved unimportable, and only when enabled.
 
-    Appended to the END of sys.meta_path, so a module only reaches it when no real file
-    was found anywhere.
+    Sits at the FRONT of sys.meta_path, but answers exclusively for roots already in
+    `stubbed` - and a root only lands there after a real import of it raised ImportError.
+    So nothing importable is ever shadowed.
+
+    The front position is what makes "missing" cover more than "absent". A module can exist
+    on disk and still be unimportable: _tkinter ships in the image but its shared library
+    does not, so importing it raises "libtk8.6.so: cannot open shared object file". From the
+    end of sys.meta_path the stub was unreachable - PathFinder found the real .so on every
+    retry, the same ImportError came back, and the world was dropped even though nothing
+    server-side needed the GUI toolkit at all.
     """
 
     def __init__(self):
@@ -139,7 +148,7 @@ class OnDemandStubFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 
 
 finder = OnDemandStubFinder()
-sys.meta_path.append(finder)
+sys.meta_path.insert(0, finder)
 
 
 # Archipelago registers a world's classes as a side effect of *executing* its module: the

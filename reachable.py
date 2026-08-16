@@ -93,6 +93,18 @@ _orjson.loads = _json.loads  # type: ignore[attr-defined]
 _orjson.dumps = lambda obj, **kw: _json.dumps(obj, default=str).encode()  # type: ignore[attr-defined]
 sys.modules["orjson"] = _orjson
 
+# tkinter / _tkinter: GUI toolkit not available in headless containers. The image ships the
+# _tkinter extension but not libtk8.6.so, so importing it raises rather than being absent.
+# Mirrors generate_multiworld.py: a world whose client UI imports tkinter at module level
+# (e.g. minecraft_dig) must load here exactly as it does for generation, or the seed
+# generates fine and its reachability then dies with "No world found to handle game X".
+_tk_stub = types.ModuleType("tkinter")
+_tk_stub.__getattr__ = lambda _n: _tk_stub  # type: ignore[attr-defined]
+for _tk_name in ("tkinter", "_tkinter", "tkinter.ttk", "tkinter.font",
+                 "tkinter.messagebox", "tkinter.filedialog", "tkinter.colorchooser",
+                 "tkinter.simpledialog", "tkinter.constants"):
+    sys.modules.setdefault(_tk_name, _tk_stub)
+
 # pkg_resources: setuptools 71+ no longer ships it as a standalone top-level package. Pre-populate
 # sys.modules from pip's vendored copy so apworlds that call pkg_resources.resource_listdir()
 # (e.g. pokemon_emerald, to enumerate its data/regions/*.json) get the real implementation. With a
