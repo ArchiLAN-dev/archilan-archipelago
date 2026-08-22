@@ -28,6 +28,8 @@ import importlib.abc
 import importlib.machinery
 import sys
 import types
+import json
+import os
 
 # Archipelago's own top-level modules. Stubbing one of these would produce a silently
 # broken generator, so a failure on them stays fatal.
@@ -233,7 +235,16 @@ def import_world(module_name, on_stub=None):
 
         finder.enabled = not honest
         try:
-            return importlib.import_module(module_name)
+            module = importlib.import_module(module_name)
+            # Outside the guarded block below on purpose: that one rolls the world back and
+            # re-raises, and the callers skip a world whose import raised. A version label must
+            # never be able to unload a world - the manifest is third-party data, and
+            # tuplize_version accepts nothing but "major.minor.build".
+            try:
+                _apply_world_manifest(module)
+            except Exception as exc:
+                print(f"Note: manifest not applied for {module_name}: {exc}", file=sys.stderr)
+            return module
         except ImportError as exc:
             missing = (getattr(exc, "name", None) or "").split(".")[0]
             _rollback(snapshot)
@@ -262,3 +273,42 @@ def import_world(module_name, on_stub=None):
             finder.enabled = True
 
     raise ImportError(f"{module_name}: still missing modules after {MAX_STUB_ROUNDS} attempts")
+
+def _apply_world_manifest(module):
+    """Rejoue l'étape manifest du core (worlds/__init__.py).
+
+    import_module n'exécute que le corps de classe : le world est enregistré mais
+    world_version reste au défaut Version(0,0,0) (la metaclass interdit de le poser
+    depuis la classe). Le core l'applique dans une passe séparée qui ne couvre que
+    custom_worlds/ et worlds/, et seulement les worlds chargés sans erreur. Un world
+    importé d'ailleurs - ou rescapé ici après un échec côté core - la rate. On la refait.
+    """
+    manifest = _read_manifest(module)
+    game = manifest.get("game")
+    if not game:
+        # No manifest, nothing to name: leave without touching the registry, so a world that
+        # ships none never depends on worlds.AutoWorld being importable here.
+        return
+
+    from worlds.AutoWorld import AutoWorldRegister
+    from Utils import tuplize_version
+
+    if game in AutoWorldRegister.world_types:
+        cls = AutoWorldRegister.world_types[game]
+        cls.world_version = tuplize_version(manifest.get("world_version", "0.0.0"))
+        cls.manifest = manifest
+
+
+def _read_manifest(module):
+    """The world's archipelago.json, or an empty dict - same walk as the core's."""
+    roots = list(getattr(module, "__path__", []))
+    if not roots and getattr(module, "__file__", None):
+        roots = [os.path.dirname(module.__file__)]
+
+    for root in roots:
+        for dirpath, _dirs, files in os.walk(root):
+            if "archipelago.json" in files:
+                with open(os.path.join(dirpath, "archipelago.json"), encoding="utf-8") as fh:
+                    return json.load(fh)
+
+    return {}
