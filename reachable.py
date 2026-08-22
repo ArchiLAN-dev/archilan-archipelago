@@ -364,15 +364,47 @@ def build_multiworld(game: str, player_name: str, yaml_path: str, slot_data: dic
         if step == "generate_basic":
             break
 
-    # Do NOT clear mw.precollected_items[1].
-    # Starting items (e.g. Poltergust 3000 in Luigi's Mansion) are precollected at
-    # generation time and are NOT sent via the AP received_items protocol, so they
-    # would be absent from our in-memory state if we cleared them.
-    # CollectionState(mw) auto-collects them with event=False (updates reachable_regions).
-    # received_items are then collected on top - double-collecting a progression item
-    # is harmless for boolean has() checks.
+    # mw.precollected_items[1] is left as create_items() filled it, and main() then replaces it
+    # with the seed's own starting inventory - see _seed_precollected_items. Starting items are
+    # precollected at generation time and are NOT sent via the AP received_items protocol, so
+    # dropping them entirely would lose them. CollectionState(mw) auto-collects whatever is in
+    # there with event=False (updates reachable_regions); received_items are collected on top -
+    # double-collecting a progression item is harmless for boolean has() checks.
 
     return mw, 1
+
+
+def _seed_precollected_items(mw, player_id, arch, slot, item_id_to_name) -> None:
+    """Replace the regenerated starting inventory with the one the seed actually handed out.
+
+    push_precollected() runs during create_items, and a world is free to draw its starting items
+    at random: Sayonara Wild Hearts picks the level you begin with via world.random.choice. Our
+    fake generation rolls its own seed, so it hands out a *different* start on every run - three
+    consecutive reachability passes on the same save answered Laser Love, Hate Skulls and Forest
+    Dub. Reachability was effectively random for those worlds, wrong in both directions: it opened
+    a level the player never got and hid the one they did.
+
+    The multidata records what was really precollected (Main.py serializes
+    multiworld.precollected_items), so it is the authority. Replace rather than merge: anything the
+    regeneration rolled is by definition not what the player started with.
+    """
+    precollected_ids = arch.get("precollected_items", {}).get(slot, [])
+
+    items = []
+    for item_id in precollected_ids:
+        name = item_id_to_name.get(item_id)
+        if name is None:
+            print(f"Warning: precollected item #{item_id} is not in the datapackage, skipped",
+                  file=sys.stderr)
+            continue
+        try:
+            items.append(mw.create_item(name, player_id))
+        except Exception as exc:
+            # A world updated since the seed was rolled may no longer know the name. Losing one
+            # starting item skews the answer; taking down the whole pass would remove it entirely.
+            print(f"Warning: could not recreate precollected item '{name}': {exc}", file=sys.stderr)
+
+    mw.precollected_items[player_id] = items
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +482,7 @@ def main() -> None:
     }
     _world_id_to_name: dict[int, str] = mw.worlds[player_id].item_id_to_name
     item_id_to_name: dict[int, str] = {**_world_id_to_name, **_arch_id_to_name}
+    _seed_precollected_items(mw, player_id, arch, slot, item_id_to_name)
     event_locations = [loc for loc in mw.get_locations(player_id) if not loc.address]
 
     # ── Per-request computation (fast once multiworld is loaded) ──────────────
