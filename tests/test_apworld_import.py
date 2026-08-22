@@ -117,6 +117,47 @@ _BROKEN_WORLD = textwrap.dedent(
     """
 )
 
+# Faithful stand-ins for worlds.AutoWorld.AutoWorldRegister and Utils.tuplize_version. The
+# manifest pass reaches for both, and tuplize_version accepts nothing but "major.minor.build" -
+# which is the whole point of the test below.
+_FAKE_AUTO_WORLD = textwrap.dedent(
+    """
+    class AutoWorldRegister:
+        world_types = {}
+    """
+)
+
+_FAKE_UTILS = textwrap.dedent(
+    """
+    import typing
+
+
+    class Version(typing.NamedTuple):
+        major: int
+        minor: int
+        build: int
+
+
+    def tuplize_version(version):
+        return Version(*(int(piece) for piece in version.split(".")))
+    """
+)
+
+# A world that registers itself, like a class body does through the real metaclass.
+_MANIFEST_WORLD = textwrap.dedent(
+    """
+    from worlds.AutoWorld import AutoWorldRegister
+
+
+    class ManifestWorld:
+        game = "Manifest Game"
+        world_version = (0, 0, 0)
+
+
+    AutoWorldRegister.world_types["Manifest Game"] = ManifestWorld
+    """
+)
+
 _HARNESS = textwrap.dedent(
     """
     import json, sys, types
@@ -135,12 +176,21 @@ _HARNESS = textwrap.dedent(
     files = types.ModuleType("worlds.Files")
     exec(open(sys.argv[5], encoding="utf-8").read(), files.__dict__)
 
+    auto_world = types.ModuleType("worlds.AutoWorld")
+    exec(open(sys.argv[6], encoding="utf-8").read(), auto_world.__dict__)
+
+    utils = types.ModuleType("Utils")
+    exec(open(sys.argv[7], encoding="utf-8").read(), utils.__dict__)
+    sys.modules["Utils"] = utils
+
     worlds = types.ModuleType("worlds")
     worlds.__path__ = [tmp_dir]
     worlds.__package__ = "worlds"
     worlds.Files = files
+    worlds.AutoWorld = auto_world
     sys.modules["worlds"] = worlds
     sys.modules["worlds.Files"] = files
+    sys.modules["worlds.AutoWorld"] = auto_world
 
     from apworld_import import import_world
 
@@ -156,16 +206,29 @@ _HARNESS = textwrap.dedent(
         "patch_types": sorted(files.AutoPatchRegister.patch_types),
         "mixin_attrs": sorted(n for n in vars(base_classes.CollectionState) if "flaky" in n),
         "init_functions": len(base_classes.CollectionState.additional_init_functions),
+        "world_types": sorted(auto_world.AutoWorldRegister.world_types),
+        "world_versions": {
+            game: list(cls.world_version)
+            for game, cls in auto_world.AutoWorldRegister.world_types.items()
+        },
     }))
     """
 )
 
 
-def _run(tmp_path, world_module: str, world_body: str, extra_modules: dict | None = None) -> dict:
+def _run(
+    tmp_path,
+    world_module: str,
+    world_body: str,
+    extra_modules: dict | None = None,
+    manifest: dict | None = None,
+) -> dict:
     """Import `world_module` through import_world in a subprocess, return the registry state."""
     package_dir = tmp_path / world_module.split(".")[-1]
     package_dir.mkdir()
     (package_dir / "__init__.py").write_text(world_body, encoding="utf-8")
+    if manifest is not None:
+        (package_dir / "archipelago.json").write_text(json.dumps(manifest), encoding="utf-8")
     for name, body in (extra_modules or {}).items():
         (tmp_path / f"{name}.py").write_text(body, encoding="utf-8")
 
@@ -173,10 +236,14 @@ def _run(tmp_path, world_module: str, world_body: str, extra_modules: dict | Non
     base_classes.write_text(_FAKE_BASE_CLASSES, encoding="utf-8")
     files = tmp_path / "_fake_files.py"
     files.write_text(_FAKE_FILES, encoding="utf-8")
+    auto_world = tmp_path / "_fake_auto_world.py"
+    auto_world.write_text(_FAKE_AUTO_WORLD, encoding="utf-8")
+    utils = tmp_path / "_fake_utils.py"
+    utils.write_text(_FAKE_UTILS, encoding="utf-8")
 
     result = subprocess.run(
         [sys.executable, "-c", _HARNESS, _REPO_ROOT, str(tmp_path), world_module,
-         str(base_classes), str(files)],
+         str(base_classes), str(files), str(auto_world), str(utils)],
         capture_output=True,
         text=True,
         check=False,
@@ -216,3 +283,50 @@ def test_non_import_failure_leaves_the_registries_untouched(tmp_path):
     assert state["error"] == "ValueError: world is broken"
     assert state["file_endings"] == []
     assert state["patch_types"] == []
+def test_manifest_names_the_world_version(tmp_path):
+    """import_module alone leaves world_version at its default: the manifest pass fills it in.
+
+    The core applies it in a pass that only walks its own worlds/ and custom_worlds/ folders, so an
+    apworld extracted elsewhere - which is exactly how the loaders here take them - never gets one.
+    Generate.py then rejects any yaml carrying a `version: {min: ...}` requirement, because 0.0.0 is
+    below everything.
+    """
+    state = _run(
+        tmp_path,
+        "worlds.manifest_world",
+        _MANIFEST_WORLD,
+        manifest={"game": "Manifest Game", "world_version": "1.2.3"},
+    )
+
+    assert state["error"] is None
+    assert state["world_types"] == ["Manifest Game"]
+    assert state["world_versions"]["Manifest Game"] == [1, 2, 3]
+
+
+def test_a_broken_manifest_leaves_the_world_loaded(tmp_path):
+    """A version label must never be able to unload a world.
+
+    `tuplize_version` accepts nothing but "major.minor.build": a two-part version, an int, a
+    "-beta" suffix or a malformed archipelago.json all raise. Applied inside import_world's guarded
+    block, that rolled the world back and re-raised - and the loaders skip a world whose import
+    raised, so a third-party version string could turn into "No world found to handle game X".
+    """
+    state = _run(
+        tmp_path,
+        "worlds.manifest_world",
+        _MANIFEST_WORLD,
+        manifest={"game": "Manifest Game", "world_version": "1.2"},
+    )
+
+    assert state["error"] is None
+    assert state["world_types"] == ["Manifest Game"]
+    # Applying it failed, so the default stands - the world itself is untouched.
+    assert state["world_versions"]["Manifest Game"] == [0, 0, 0]
+
+
+def test_a_world_without_a_manifest_needs_no_registry(tmp_path):
+    """No manifest, no lookup: the pass must not drag worlds.AutoWorld into every import."""
+    state = _run(tmp_path, "worlds.flaky_world", _FLAKY_WORLD)
+
+    assert state["error"] is None
+    assert state["world_versions"] == {}
