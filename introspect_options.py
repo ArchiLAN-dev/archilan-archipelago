@@ -2,11 +2,11 @@
 """
 Introspect Archipelago apworld option types + location names and emit JSON to stdout.
 
-Output: {"options": {"option_key": {"type": "range|choice|toggle|text|weights",
+Output: {"options": {"option_key": {"type": "range|choice|toggle|text|weights|dict",
                                     "defaultWeights": {key: int}}},
          "locations": ["Location Name", ...]}
 
-"defaultWeights" is only present for "weights" (OptionDict) options.
+"defaults" and "validKeys" are only present for "dict" (OptionDict) options.
 "locations" is the STATIC location list (the World class's location_name_to_id keys) -
 options-dependent locations are not reflected, so consumers treat it as a hint.
 """
@@ -210,7 +210,7 @@ def classify(field_type: type) -> str | None:
         # OptionDict before Choice - OptionDict may not inherit from Choice but
         # check order matters if a future version changes the hierarchy.
         if _OptionDict and issubclass(field_type, _OptionDict):
-            return "weights"
+            return "dict"
         # Toggle before Choice - Toggle subclasses Choice in some AP versions.
         if _Toggle and issubclass(field_type, _Toggle):
             return "toggle"
@@ -254,11 +254,21 @@ if hasattr(world_cls, "options_dataclass") and world_cls.options_dataclass is no
 
         entry: dict = {"type": typ}
 
-        if typ == "weights":
+        if typ == "dict":
+            # An OptionDict maps a setting name to what that setting is worth - a string, a
+            # number, a bool, or a nested block. It used to be reported as "weights", whose
+            # serializer coerces every value with int(): "player_name" raised, the bare except
+            # swallowed it, and the option reached the editor typed wrong AND with no defaults.
             try:
                 default = field_type.default
                 if isinstance(default, dict):
-                    entry["defaultWeights"] = {str(k): int(v) for k, v in default.items()}
+                    entry["defaults"] = {str(k): v for k, v in default.items()}
+            except Exception:
+                pass
+            try:
+                valid_keys = getattr(field_type, "valid_keys", None)
+                if valid_keys:
+                    entry["validKeys"] = sorted(str(k) for k in valid_keys)
             except Exception:
                 pass
 
