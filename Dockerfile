@@ -60,6 +60,7 @@ ENV PIP_NO_INDEX=1 \
 # Scripts from repo root (standalone repo - no archipelago/ prefix)
 COPY generate_template.py /usr/local/bin/generate_template.py
 COPY introspect_options.py /usr/local/bin/introspect_options.py
+COPY read_multidata.py /usr/local/bin/read_multidata.py
 COPY generate_multiworld.py /usr/local/bin/generate_multiworld.py
 # Shared world-import machinery. Installed in site-packages so every script in the image
 # can import it, whatever directory it runs from (/usr/local/bin, /reachable, …).
@@ -77,6 +78,7 @@ COPY entrypoint.sh /entrypoint.sh
 # host's git line-ending config.
 RUN for f in /usr/local/bin/generate_template.py \
              /usr/local/bin/introspect_options.py \
+             /usr/local/bin/read_multidata.py \
              /usr/local/bin/generate_multiworld.py \
              /usr/local/lib/python3.13/site-packages/apworld_import.py \
              /reachable/reachable.py \
@@ -88,6 +90,7 @@ RUN for f in /usr/local/bin/generate_template.py \
     done \
     && chmod +x /usr/local/bin/generate_template.py \
     /usr/local/bin/introspect_options.py \
+    /usr/local/bin/read_multidata.py \
     /usr/local/bin/generate_multiworld.py \
     /readsave/read_save.py \
     /ap_server.sh \
