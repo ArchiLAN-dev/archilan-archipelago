@@ -11,7 +11,15 @@ ARG ARCHIPELAGO_VERSION
 # pipelining makes each response match its request.
 RUN echo 'Acquire::http::Pipeline-Depth "0";' > /etc/apt/apt.conf.d/99no-pipeline
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Les paquets de l'image de base vieillissent avec le tag auquel elle est épinglée. Cette ligne
+# récupère les correctifs de sécurité publiés depuis.
+#
+# Attention : elle ne se rejoue que si la couche est reconstruite. Le workflow de publication met
+# les couches en cache (`cache-from: type=gha`), donc un Dockerfile inchangé pendant des mois
+# continue de servir une couche figée. Quand une CVE corrigée apparaît sans changement de code,
+# modifier l'instruction elle-même - un commentaire au-dessus ne suffit pas, il ne fait pas partie
+# de la commande et n'entre pas dans la clé de cache.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     wget \
     tar \
     ca-certificates \
