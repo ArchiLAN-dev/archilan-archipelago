@@ -106,6 +106,16 @@ except OSError:
 _worlds_stub.user_folder = _user_folder
 _worlds_stub.failed_world_loads = []
 
+# worlds.Files: a submodule, not an attribute of the package. A world that writes
+# `worlds.Files.APDeltaPatch` without importing it (jurassic_park does) only works when something
+# else already pulled it in - which a full generation gets for free from a neighbouring world, and
+# an isolated introspection never does. Importing it here makes the two paths behave the same.
+try:
+    import worlds.Files as _worlds_files  # noqa: E402
+    _worlds_stub.Files = _worlds_files
+except Exception as _exc:  # a world that needs it will fail on its own terms, with its own message
+    print(f"Note: worlds.Files unavailable: {_exc}", file=sys.stderr)
+
 # ─── World imports: honest first, stub only what is truly missing ────────────
 # See apworld_import.py: a world that ships its own fallback for a missing dependency
 # takes it, and only a module proven missing gets stubbed.
@@ -122,16 +132,35 @@ def _sanitize_pkg_name(name: str) -> str:
     return sanitized
 
 
-def _detect_pkg(entries: list[str]) -> str | None:
-    """The apworld's package folder: the one holding __init__.py, else the first entry's root."""
+def _detect_pkg(entries: list[str]) -> tuple[str, str] | None:
+    """The apworld's package folder, and the archive directory that holds it.
+
+    Returns `(package name, path of its parent relative to the archive root)`.
+
+    The parent used to be assumed to be the archive root, and only an `__init__.py` sitting exactly
+    one level down counted. Three worlds - fez, dungeon_clawler, nrftw - nest their package one
+    level deeper, so detection fell through to "first entry's root": the *name* came out right, the
+    directory added to `worlds.__path__` did not, and importing `worlds.<name>` failed with
+    ModuleNotFoundError against a package that was sitting right there.
+
+    The shallowest `__init__.py` wins, so a world that also ships sub-packages still resolves to its
+    own root rather than to one of them.
+    """
+    best: tuple[int, list[str], str] | None = None
     for entry in entries:
         parts = entry.replace("\\", "/").split("/")
-        if len(parts) == 2 and parts[1] == "__init__.py" and parts[0]:
-            return parts[0]
+        if len(parts) >= 2 and parts[-1] == "__init__.py" and parts[-2]:
+            if best is None or len(parts) < best[0]:
+                best = (len(parts), parts[:-2], parts[-2])
+
+    if best is not None:
+        return best[2], "/".join(best[1])
+
+    # No __init__.py anywhere: keep the old guess rather than skipping the archive outright.
     for entry in entries:
         root = entry.replace("\\", "/").split("/")[0]
         if root:
-            return root
+            return root, ""
     return None
 
 
@@ -143,14 +172,16 @@ for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
             entries = zf.namelist()
         if not entries:
             continue
-        raw_pkg_name = _detect_pkg(entries)
+        detected = _detect_pkg(entries)
     except Exception as exc:
         print(f"Warning: could not inspect {_apw.name}: {exc}", file=sys.stderr)
         continue
 
-    if not raw_pkg_name:
+    if detected is None:
         print(f"Warning: skipping {_apw.name}: could not detect package name", file=sys.stderr)
         continue
+
+    raw_pkg_name, pkg_parent = detected
 
     # An apworld may ship its sources under a display-name folder that is not a valid Python
     # identifier ("Twilight Princess"). Sanitize and rename it below instead of skipping, so its
@@ -168,12 +199,17 @@ for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
     atexit.register(shutil.rmtree, _tmp_dir, True)
     with zipfile.ZipFile(str(_apw)) as _zf:
         _zf.extractall(_tmp_dir)
-    if raw_pkg_name != pkg_name:
-        _raw_dir = os.path.join(_tmp_dir, raw_pkg_name)
-        if os.path.isdir(_raw_dir):
-            os.rename(_raw_dir, os.path.join(_tmp_dir, pkg_name))
 
-    _worlds_stub.__path__.insert(0, _tmp_dir)
+    # What goes on the import path is the directory *containing* the package, which is the archive
+    # root only when the package sits directly under it.
+    _pkg_root = os.path.join(_tmp_dir, *pkg_parent.split("/")) if pkg_parent else _tmp_dir
+
+    if raw_pkg_name != pkg_name:
+        _raw_dir = os.path.join(_pkg_root, raw_pkg_name)
+        if os.path.isdir(_raw_dir):
+            os.rename(_raw_dir, os.path.join(_pkg_root, pkg_name))
+
+    _worlds_stub.__path__.insert(0, _pkg_root)
     try:
         import_world(
             world_mod_name,
@@ -182,7 +218,7 @@ for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
         )
         _loaded_pkg_names.append(pkg_name)
     except Exception as exc:
-        _worlds_stub.__path__.remove(_tmp_dir)
+        _worlds_stub.__path__.remove(_pkg_root)
         print(f"Warning: failed to load {_apw.name} ({pkg_name}): {exc}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
 
