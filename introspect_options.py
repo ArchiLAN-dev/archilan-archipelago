@@ -6,7 +6,9 @@ Output: {"options": {"option_key": {"type": "range|choice|toggle|text|weights|di
                                     "defaultWeights": {key: int}}},
          "locations": ["Location Name", ...]}
 
-"defaults" and "validKeys" are only present for "dict" (OptionDict) options.
+"defaults", "validKeys" and "keys" are only present for "dict" (OptionDict) options.
+"keys" maps a sub-setting to the values it accepts, and is emitted ONLY from a `schema`
+declared by the option class - never guessed from a docstring or from the defaults.
 "locations" is the STATIC location list (the World class's location_name_to_id keys) -
 options-dependent locations are not reflected, so consumers treat it as a hint.
 """
@@ -95,6 +97,7 @@ _worlds_stub.failed_world_loads = []
 # See apworld_import.py: a world that ships its own fallback for a missing dependency
 # takes it, and only a module proven missing gets stubbed.
 from apworld_import import import_world  # noqa: E402
+from option_schema import schema_sub_values  # noqa: E402
 
 # ── Load custom apworld ───────────────────────────────────────────────────────
 
@@ -269,6 +272,15 @@ if hasattr(world_cls, "options_dataclass") and world_cls.options_dataclass is no
                 valid_keys = getattr(field_type, "valid_keys", None)
                 if valid_keys:
                     entry["validKeys"] = sorted(str(k) for k in valid_keys)
+            except Exception:
+                pass
+            # Story 9.51: what each sub-setting accepts, when - and only when - the world
+            # declared a Schema saying so. Absent for every world that did not; see
+            # option_schema.py for why nothing is inferred in that case.
+            try:
+                sub_values = schema_sub_values(field_type)
+                if sub_values:
+                    entry["keys"] = sub_values
             except Exception:
                 pass
 
