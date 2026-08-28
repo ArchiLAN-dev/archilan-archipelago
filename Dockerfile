@@ -73,6 +73,8 @@ COPY generate_multiworld.py /usr/local/bin/generate_multiworld.py
 # Shared world-import machinery. Installed in site-packages so every script in the image
 # can import it, whatever directory it runs from (/usr/local/bin, /reachable, …).
 COPY apworld_import.py /usr/local/lib/python3.13/site-packages/apworld_import.py
+# Same reason: introspect_options.py runs from /usr/local/bin and imports this by name.
+COPY option_schema.py /usr/local/lib/python3.13/site-packages/option_schema.py
 COPY reachable.py /reachable/reachable.py
 COPY protocol_io.py /reachable/protocol_io.py
 COPY read_save.py /readsave/read_save.py
@@ -89,6 +91,7 @@ RUN for f in /usr/local/bin/generate_template.py \
              /usr/local/bin/read_multidata.py \
              /usr/local/bin/generate_multiworld.py \
              /usr/local/lib/python3.13/site-packages/apworld_import.py \
+             /usr/local/lib/python3.13/site-packages/option_schema.py \
              /reachable/reachable.py \
              /reachable/protocol_io.py \
              /readsave/read_save.py \
@@ -103,6 +106,12 @@ RUN for f in /usr/local/bin/generate_template.py \
     /readsave/read_save.py \
     /ap_server.sh \
     /entrypoint.sh
+
+# Fail the build, not a production run, when a script imports a module the image does not carry.
+# option_schema.py was added to the repo without this COPY: the image built and shipped happily, and
+# introspection died on `ModuleNotFoundError` against a real apworld hours later. These modules have
+# no import-time side effects, so importing them here is cheap and catches the whole class.
+RUN python -c "import apworld_import, option_schema"
 
 ENV PATH="/app/Archipelago/Archipelago:${PATH}"
 
