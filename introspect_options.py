@@ -39,7 +39,24 @@ _mu.update = lambda *a, **kw: None  # type: ignore[attr-defined]
 sys.modules["ModuleUpdate"] = _mu
 
 _winapi_stub = types.ModuleType("_winapi")
-_winapi_stub.__getattr__ = lambda name: 0  # type: ignore[method-assign]
+def _winapi_getattr(name):
+    """Answer anything with 0 - except the dunders, which must stay absent.
+
+    `inspect.getmodule` walks `sys.modules`, keeps every module that `hasattr(m, "__file__")`, and
+    calls `inspect.getabsfile` on it without a guard. A stub that answers `0` to `__file__` therefore
+    passes the check and then raises `TypeError: <module '_winapi' from 0> is a built-in module`,
+    breaking any code that inspects the call stack. gtfo does exactly that, through
+    `importlib.resources.files()`.
+
+    Raising AttributeError for dunders makes the stub look like the built-in module it stands in for,
+    which `getmodule` skips.
+    """
+    if name.startswith("__") and name.endswith("__"):
+        raise AttributeError(name)
+    return 0
+
+
+_winapi_stub.__getattr__ = _winapi_getattr  # type: ignore[method-assign]
 sys.modules["_winapi"] = _winapi_stub
 
 # orjson: prefer the real library when the image carries it, and fall back to a json-backed stub.
@@ -207,6 +224,23 @@ def _detect_pkg(entries: list[str]) -> tuple[str, str] | None:
     return None
 
 
+def _print_layout(apworld: str, entries: list[str], pkg: str, parent: str, pkg_root: str) -> None:
+    """What the archive actually looks like, printed next to the failure it explains.
+
+    A load failure used to say only which module was missing, which is not enough to tell a bad
+    archive layout from a bad import inside the world. Three worlds were "fixed" on a wrong guess
+    about their layout because nobody could see it; this makes the next one answerable from the log.
+    """
+    print(f"Layout of {apworld}: package={pkg!r} parent={parent!r}", file=sys.stderr)
+    try:
+        expected = os.path.join(pkg_root, pkg, "__init__.py")
+        print(f"  {expected} exists: {os.path.isfile(expected)}", file=sys.stderr)
+        print(f"  extracted root holds: {sorted(os.listdir(pkg_root))[:12]}", file=sys.stderr)
+    except OSError as err:
+        print(f"  could not inspect the extracted tree: {err}", file=sys.stderr)
+    print(f"  archive entries ({len(entries)}): {entries[:12]}", file=sys.stderr)
+
+
 _loaded_pkg_names: list[str] = []
 
 for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
@@ -263,6 +297,7 @@ for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
     except Exception as exc:
         _worlds_stub.__path__.remove(_pkg_root)
         print(f"Warning: failed to load {_apw.name} ({pkg_name}): {exc}", file=sys.stderr)
+        _print_layout(_apw.name, entries, pkg_name, pkg_parent, _pkg_root)
         traceback.print_exc(file=sys.stderr)
 
 # ── Find registered game ──────────────────────────────────────────────────────
