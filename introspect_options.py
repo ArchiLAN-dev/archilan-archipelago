@@ -42,11 +42,24 @@ _winapi_stub = types.ModuleType("_winapi")
 _winapi_stub.__getattr__ = lambda name: 0  # type: ignore[method-assign]
 sys.modules["_winapi"] = _winapi_stub
 
+# orjson: prefer the real library when the image carries it, and fall back to a json-backed stub.
+# The `.orjson` attribute matters - the real package exposes its native extension as a submodule of
+# that name, and a world written against it does `from orjson import orjson`. A stub without it
+# turns a missing optional dependency into an unimportable world.
+#
+# Kept identical to generate_multiworld.py on purpose: a world that generates must also introspect.
+# The two drifted apart here, and clair_obscur generated fine for months while its option types were
+# never introspected at all - silently, because introspection runs in the background at upload.
 import json as _json
-_orjson = types.ModuleType("orjson")
-_orjson.loads = _json.loads  # type: ignore[attr-defined]
-_orjson.dumps = lambda obj, **kw: _json.dumps(obj, default=str).encode()  # type: ignore[attr-defined]
-sys.modules["orjson"] = _orjson
+try:
+    import orjson as _orjson  # noqa: F401
+except ImportError:
+    _orjson = types.ModuleType("orjson")
+    _orjson.loads = _json.loads  # type: ignore[attr-defined]
+    _orjson.dumps = lambda obj, **kw: _json.dumps(obj, default=str).encode()  # type: ignore[attr-defined]
+    sys.modules["orjson"] = _orjson
+if not hasattr(_orjson, "orjson"):
+    _orjson.orjson = _orjson  # type: ignore[attr-defined]
 
 # tkinter / _tkinter: GUI toolkit not available in headless containers (the extension ships
 # without its libtk8.6.so). Mirrors generate_multiworld.py, so a world whose client UI
