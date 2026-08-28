@@ -88,10 +88,21 @@ _winapi_stub = types.ModuleType("_winapi")
 _winapi_stub.__getattr__ = lambda name: 0  # type: ignore[method-assign]
 sys.modules["_winapi"] = _winapi_stub
 
-_orjson = types.ModuleType("orjson")
-_orjson.loads = _json.loads  # type: ignore[attr-defined]
-_orjson.dumps = lambda obj, **kw: _json.dumps(obj, default=str).encode()  # type: ignore[attr-defined]
-sys.modules["orjson"] = _orjson
+# orjson: prefer the real library when the image carries it, and fall back to a json-backed stub.
+# The `.orjson` attribute matters - the real package exposes its native extension as a submodule of
+# that name, and a world written against it does `from orjson import orjson`.
+#
+# Kept identical to the three other scripts. This one was the last to still carry the bare stub, and
+# it broke the reachability daemon outright for any session holding a Clair Obscur yaml.
+try:
+    import orjson as _orjson  # noqa: F401
+except ImportError:
+    _orjson = types.ModuleType("orjson")
+    _orjson.loads = _json.loads  # type: ignore[attr-defined]
+    _orjson.dumps = lambda obj, **kw: _json.dumps(obj, default=str).encode()  # type: ignore[attr-defined]
+    sys.modules["orjson"] = _orjson
+if not hasattr(_orjson, "orjson"):
+    _orjson.orjson = _orjson  # type: ignore[attr-defined]
 
 # tkinter / _tkinter: GUI toolkit not available in headless containers. The image ships the
 # _tkinter extension but not libtk8.6.so, so importing it raises rather than being absent.
@@ -151,16 +162,30 @@ def _sanitize_pkg_name(name: str) -> str:
     return sanitized
 
 
-def _detect_pkg(entries: list[str]) -> str | None:
-    """The apworld's package folder: the one holding __init__.py, else the first entry's root."""
+def _detect_pkg(entries: list[str]) -> tuple[str, str] | None:
+    """The apworld's package folder, and the archive directory that holds it.
+
+    Returns `(package name, path of its parent relative to the archive root)`.
+
+    Kept identical to introspect_options.py. Only an `__init__.py` exactly one level down used to
+    count, and the archive root was assumed to be the directory to expose; fez, dungeon_clawler and
+    nrftw nest their package one level deeper, so the name came out right and the path did not.
+    """
+    best: tuple[int, list[str], str] | None = None
     for entry in entries:
         parts = entry.replace("\\", "/").split("/")
-        if len(parts) == 2 and parts[1] == "__init__.py" and parts[0]:
-            return parts[0]
+        if len(parts) >= 2 and parts[-1] == "__init__.py" and parts[-2]:
+            if best is None or len(parts) < best[0]:
+                best = (len(parts), parts[:-2], parts[-2])
+
+    if best is not None:
+        return best[2], "/".join(best[1])
+
+    # No __init__.py anywhere: keep the old guess rather than skipping the archive outright.
     for entry in entries:
         root = entry.replace("\\", "/").split("/")[0]
         if root:
-            return root
+            return root, ""
     return None
 
 
@@ -171,13 +196,15 @@ def _load_apworlds_from(apworld_dir: pathlib.Path) -> None:
         try:
             with zipfile.ZipFile(str(apw)) as zf:
                 entries = zf.namelist()
-            raw_pkg = _detect_pkg(entries)
+            detected = _detect_pkg(entries)
         except Exception as e:
             print(f"Warning: could not inspect {apw.name}: {e}", file=sys.stderr)
             continue
-        if not raw_pkg:
+        if detected is None:
             print(f"Warning: skipping {apw.name}: could not detect package name", file=sys.stderr)
             continue
+
+        raw_pkg, pkg_parent = detected
 
         # An apworld may ship its sources under a display-name folder that is not a valid Python
         # identifier ("Twilight Princess"). Such a package cannot be zipimported under that name, so
@@ -200,21 +227,26 @@ def _load_apworlds_from(apworld_dir: pathlib.Path) -> None:
                 for member in zf.infolist():
                     member.filename = member.filename.replace("\\", "/")
                     zf.extract(member, tmp_dir)
+            # What holds the package is the archive root only when the package sits directly
+            # under it.
+            pkg_root = os.path.join(tmp_dir, *pkg_parent.split("/")) if pkg_parent else tmp_dir
+
             if raw_pkg != pkg:
-                raw_dir = os.path.join(tmp_dir, raw_pkg)
+                raw_dir = os.path.join(pkg_root, raw_pkg)
                 if os.path.isdir(raw_dir):
-                    os.rename(raw_dir, os.path.join(tmp_dir, pkg))
+                    os.rename(raw_dir, os.path.join(pkg_root, pkg))
             # Bundled top-level deps sit at the zip root, so expose it on sys.path too.
             sys.path.insert(0, tmp_dir)
-            _worlds_pkg.__path__.append(tmp_dir)
+            _worlds_pkg.__path__.append(pkg_root)
             import_world(
                 mod,
                 on_stub=lambda name, a=apw.name: print(
                     f"Note: stubbed missing module '{name}' for {a}", file=sys.stderr),
             )
         except Exception as e:
-            if tmp_dir in _worlds_pkg.__path__:
-                _worlds_pkg.__path__.remove(tmp_dir)
+            for _p in {pkg_root, tmp_dir}:
+                if _p in _worlds_pkg.__path__:
+                    _worlds_pkg.__path__.remove(_p)
             if tmp_dir in sys.path:
                 sys.path.remove(tmp_dir)
             print(f"Warning: failed to load {apw.name} ({pkg}): {e}", file=sys.stderr)
