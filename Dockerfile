@@ -44,11 +44,16 @@ RUN grep -vE '^\s*(kivy|cython|cymem|pyshortcuts|Pymem|.* @ git\+)' \
         /app/ArchipelagoSrc/requirements.txt \
     | pip install --no-cache-dir -r /dev/stdin
 
+# protobuf: worlds/_sc2common ships generated *_pb2 modules that need the real runtime. Without
+# it the stubbing machinery substitutes a fake `google` package, the generated module runs
+# against it and dies on `KeyError: '_RACE'` - an error that says nothing about the missing
+# dependency. Any world importing _sc2common (mindustry) then fails to load.
 RUN pip install --no-cache-dir \
     aiohttp \
     websockets \
     boto3 \
-    setuptools
+    setuptools \
+    protobuf
 
 # Secret of Evermore (soe) needs pyevermizer at *generation* time. Archipelago
 # would lazily pip-install it when loading soe.apworld, but the gen container has
@@ -112,6 +117,11 @@ RUN for f in /usr/local/bin/generate_template.py \
 # introspection died on `ModuleNotFoundError` against a real apworld hours later. These modules have
 # no import-time side effects, so importing them here is cheap and catches the whole class.
 RUN python -c "import apworld_import, option_schema"
+
+# Directories Archipelago treats as always-there. A world is free to read one in its module body -
+# gtfo iterates `{local_path()}/Players` at import - and a missing directory then fails the whole
+# world rather than the feature that needed it.
+RUN mkdir -p /app/ArchipelagoSrc/Players /app/ArchipelagoSrc/output
 
 ENV PATH="/app/Archipelago/Archipelago:${PATH}"
 

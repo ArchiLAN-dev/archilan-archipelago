@@ -111,6 +111,16 @@ _worlds_stub.user_folder = None
 _worlds_stub.failed_world_loads = []
 _worlds_stub.network_data_package = {"games": {}}
 
+# worlds.Files: a submodule, not an attribute of the package. A world that writes
+# `worlds.Files.APDeltaPatch` without importing it (jurassic_park does) only works when something
+# else already pulled it in - which a full generation gets for free from a neighbouring world, and
+# an isolated introspection never does. Importing it here makes the two paths behave the same.
+try:
+    import worlds.Files as _worlds_files  # noqa: E402
+    _worlds_stub.Files = _worlds_files
+except Exception as _exc:  # a world that needs it will fail on its own terms, with its own message
+    print(f"Note: worlds.Files unavailable: {_exc}", file=sys.stderr)
+
 
 # ─── Host-gated world settings (story 27.11) ──────────────────────────────────
 # Some worlds gate a *player* option behind a *host.yaml* setting of the same
