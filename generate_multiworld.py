@@ -11,6 +11,7 @@ level but are never needed server-side (dolphin_memory_engine, gclib, …).
 """
 import atexit
 import json as _json
+import importlib
 import os
 import pathlib
 import shutil
@@ -111,15 +112,58 @@ _worlds_stub.user_folder = None
 _worlds_stub.failed_world_loads = []
 _worlds_stub.network_data_package = {"games": {}}
 
-# worlds.Files: a submodule, not an attribute of the package. A world that writes
-# `worlds.Files.APDeltaPatch` without importing it (jurassic_park does) only works when something
-# else already pulled it in - which a full generation gets for free from a neighbouring world, and
-# an isolated introspection never does. Importing it here makes the two paths behave the same.
-try:
-    import worlds.Files as _worlds_files  # noqa: E402
-    _worlds_stub.Files = _worlds_files
-except Exception as _exc:  # a world that needs it will fail on its own terms, with its own message
-    print(f"Note: worlds.Files unavailable: {_exc}", file=sys.stderr)
+
+def _worlds_getattr(name):
+    """Resolve `worlds.<name>` as a sub-module on first attribute access.
+
+    Apworlds that write `worlds.Files.APDeltaPatch` - attribute access instead of an explicit
+    `import worlds.Files` - hit this path. A full generation happens to work without it, because a
+    neighbouring world in the catalogue imported the sub-module first; a script that loads one world
+    in isolation has no such neighbour.
+
+    Copied from generate_template.py, which has had it all along. Strictly failure-reducing: it only
+    fires where the stub would otherwise raise AttributeError.
+    """
+    # Dunder attributes are never sub-modules; behave like a normal module and let the standard
+    # machinery handle them instead of attempting a bogus `worlds.__x__` import.
+    if name.startswith("__") and name.endswith("__"):
+        raise AttributeError(f"module 'worlds' has no attribute {name!r}")
+    full = f"worlds.{name}"
+    if full in sys.modules:
+        mod = sys.modules[full]
+    else:
+        try:
+            mod = importlib.import_module(full)
+        except ImportError:
+            raise AttributeError(f"module 'worlds' has no attribute {name!r}")
+    setattr(_worlds_stub, name, mod)
+    return mod
+
+
+_worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
+
+# Archipelago reserves "random" as a Choice keyword; some apworlds define `option_random` anyway and
+# the metaclass asserts. On that assertion we strip the offending members and retry, so the world
+# still loads - rune4, smash64 and untitled_goose_game all need this.
+#
+# Copied from generate_template.py, which has had it all along: a world whose template generates has
+# to be loadable here too. Strictly failure-reducing - it only runs where the original raised.
+import Options as _Options_mod  # noqa: E402
+_ChoiceMeta = type(_Options_mod.Choice)
+_orig_choice_meta_new = _ChoiceMeta.__new__
+
+
+def _permissive_choice_meta_new(mcs, name, bases, namespace, **kwargs):
+    try:
+        return _orig_choice_meta_new(mcs, name, bases, namespace, **kwargs)
+    except AssertionError as _exc:
+        if "random" in str(_exc).lower():
+            _filtered = {k: v for k, v in namespace.items() if not k.startswith("option_random")}
+            return _orig_choice_meta_new(mcs, name, bases, _filtered, **kwargs)
+        raise
+
+
+_ChoiceMeta.__new__ = _permissive_choice_meta_new
 
 
 # ─── Host-gated world settings (story 27.11) ──────────────────────────────────

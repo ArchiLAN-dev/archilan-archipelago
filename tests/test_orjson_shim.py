@@ -23,7 +23,15 @@ import pytest
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-SCRIPTS = ["introspect_options.py", "generate_multiworld.py"]
+# All four scripts that load apworlds. reachable.py was the last to still carry the bare stub,
+# and it broke the reachability daemon outright for any session holding a Clair Obscur yaml -
+# a month after the same bug was found and fixed on the generation path.
+SCRIPTS = [
+    "introspect_options.py",
+    "generate_multiworld.py",
+    "generate_template.py",
+    "reachable.py",
+]
 
 # The shim, from its `try:` to the `.orjson` self-reference that closes it. Anchoring on the code
 # itself rather than on neighbouring comments keeps the extraction honest if the files move around.
@@ -68,11 +76,12 @@ def test_from_orjson_import_orjson_works(script: str) -> None:
     assert "ok" in result.stdout
 
 
-def test_the_two_scripts_agree() -> None:
+def test_every_script_agrees() -> None:
     """The invariant the drift broke, stated directly."""
-    normalised = [re.sub(r"\s+|#.*", "", _bootstrap(s)) for s in SCRIPTS]
+    normalised = {s: re.sub(r"\s+|#.*", "", _bootstrap(s)) for s in SCRIPTS}
+    distinct = set(normalised.values())
 
-    assert normalised[0] == normalised[1], (
-        "introspect_options.py and generate_multiworld.py must bootstrap orjson identically; "
-        "a world that generates has to introspect too."
+    assert len(distinct) == 1, (
+        "these scripts must bootstrap orjson identically, and they do not: "
+        f"{sorted(normalised)}. A world that generates has to introspect, and stay reachable, too."
     )

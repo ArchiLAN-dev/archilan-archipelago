@@ -19,9 +19,12 @@ import pytest
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _load_detect_pkg():
+SCRIPTS = ["introspect_options.py", "reachable.py"]
+
+
+def _load_detect_pkg(script: str = "introspect_options.py"):
     """`_detect_pkg` alone, lifted out of a module that cannot be imported here."""
-    source = open(os.path.join(_REPO_ROOT, "introspect_options.py"), encoding="utf-8").read()
+    source = open(os.path.join(_REPO_ROOT, script), encoding="utf-8").read()
     tree = ast.parse(source)
     for node in tree.body:
         if isinstance(node, ast.FunctionDef) and node.name == "_detect_pkg":
@@ -30,7 +33,7 @@ def _load_detect_pkg():
 
             return namespace["_detect_pkg"]
 
-    raise AssertionError("_detect_pkg not found in introspect_options.py")
+    raise AssertionError(f"_detect_pkg not found in {script}")
 
 
 detect_pkg = _load_detect_pkg()
@@ -77,3 +80,19 @@ def test_an_empty_archive_detects_nothing():
 def test_both_path_separators_are_handled(sep: str):
     # Archives zipped on Windows can carry backslashes.
     assert detect_pkg([f"fez{sep}fez{sep}__init__.py"]) == ("fez", "fez")
+
+
+# ── The same function, in both scripts that carry it ─────────────────────────
+#
+# reachable.py has its own copy. It kept the old two-segment rule, so fez, dungeon_clawler and
+# nrftw were unreachable as well as un-introspected - the same three worlds, the same cause, a
+# second place to fix.
+
+@pytest.mark.parametrize("script", SCRIPTS)
+def test_every_copy_handles_a_nested_layout(script: str):
+    assert _load_detect_pkg(script)(["fez/fez/__init__.py"]) == ("fez", "fez")
+
+
+@pytest.mark.parametrize("script", SCRIPTS)
+def test_every_copy_handles_a_flat_layout(script: str):
+    assert _load_detect_pkg(script)(["fez/__init__.py"]) == ("fez", "")
