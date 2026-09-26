@@ -338,10 +338,6 @@ def load_archipelago(path: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Fake AP generation
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # Exact regeneration from the generation seed
 # ---------------------------------------------------------------------------
 # AP's generation is deterministic: same yamls, same apworlds, same AP version and the same seed give
@@ -554,6 +550,11 @@ def _replay_slot_data(stage: str, world, slot_data: dict) -> None:
     replay = _SLOT_DATA_REPLAY.get(world.game)
     if replay is not None and slot_data:
         replay(stage, world, slot_data)
+
+
+# ---------------------------------------------------------------------------
+# Fake AP generation (fallback: one player, fresh seed)
+# ---------------------------------------------------------------------------
 
 def build_multiworld(game: str, player_name: str, yaml_path: str, slot_data: dict) -> tuple[MultiWorld, int]:
     """Regenerate a minimal MultiWorld (rules only, no item placement)."""
