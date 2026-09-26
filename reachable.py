@@ -159,7 +159,7 @@ from apworld_import import import_world  # noqa: E402
 
 warnings.filterwarnings("ignore")  # silence _speedups warning
 
-from BaseClasses import CollectionState, MultiWorld, ItemClassification  # noqa: E402
+from BaseClasses import CollectionState, LocationProgressType, MultiWorld, ItemClassification  # noqa: E402
 from worlds import AutoWorld  # noqa: E402
 import worlds as _worlds_pkg  # noqa: E402
 from worlds.generic.Rules import exclusion_rules  # noqa: E402
@@ -338,7 +338,222 @@ def load_archipelago(path: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Fake AP generation
+# Exact regeneration from the generation seed
+# ---------------------------------------------------------------------------
+# AP's generation is deterministic: same yamls, same apworlds, same AP version and the same seed give
+# the same multiworld, down to every roll (shop slots, prices, random-range options, world-internal
+# draws). The seed is on the first line of the spoiler written next to the multidata. Rebuilding the
+# whole multiworld with it reproduced a real 10-player run exactly, so when it is available the pass
+# answers on the real world instead of a single player rebuilt with a fresh seed. A guard compares the
+# rebuilt world with the multidata before trusting it: an AP upgrade or a re-uploaded apworld breaks
+# the reproduction, and the pass then falls back on the single-player rebuild (build_multiworld).
+
+_SEED_LINE = re.compile(r"Seed:\s*(\d+)")
+
+
+def _read_generation_seed(arch_path: str) -> int | None:
+    """The seed the multiworld was generated with, from the spoiler next to (or zipped with) the
+    multidata. None for a seed generated without a spoiler (race) or imported from elsewhere."""
+    path = Path(arch_path)
+    head = ""
+    try:
+        if path.suffix == ".zip":
+            with zipfile.ZipFile(path) as zf:
+                name = next((n for n in zf.namelist() if n.endswith("_Spoiler.txt")), None)
+                if name is not None:
+                    head = zf.read(name)[:512].decode("utf-8-sig", errors="replace")
+        else:
+            spoiler = path.with_name(f"{path.stem}_Spoiler.txt")
+            if spoiler.is_file():
+                with open(spoiler, encoding="utf-8-sig", errors="replace") as handle:
+                    head = handle.read(512)
+    except (OSError, zipfile.BadZipFile):
+        return None
+    match = _SEED_LINE.search(head)
+    return int(match.group(1)) if match else None
+
+
+def _exact_mismatch(locations: dict, precollected: dict, arch: dict) -> str | None:
+    """Why the rebuilt world is not the one the multidata describes, or None when it is.
+
+    locations: slot -> set of location ids of the rebuilt world; precollected: slot -> list of the
+    ids it precollected. Every slot of the multidata must match, not just the one asked about: a
+    divergence anywhere means the reproduction is not the real generation."""
+    arch_locations = arch.get("locations", {})
+    for slot, slot_locations in arch_locations.items():
+        if locations.get(slot) != set(slot_locations):
+            return f"slot {slot}: locations differ"
+    for slot, arch_items in arch.get("precollected_items", {}).items():
+        if slot in arch_locations and list(precollected.get(slot, [])) != list(arch_items):
+            return f"slot {slot}: starting inventory differs"
+    return None
+
+
+def build_exact_multiworld(yaml_dir: str, seed: int) -> MultiWorld:
+    """Replay Main.main up to (not including) the fill, with the generation's own seed."""
+    from Fill import parse_planned_blocks
+    from Generate import main as GMain, mystery_argparse
+    from Options import StartInventoryPool
+    from worlds.generic.Rules import locality_rules
+
+    sys.argv = [sys.argv[0]]
+    args = mystery_argparse()
+    args.player_files_path = yaml_dir
+    args.seed = seed
+    args.skip_output = True
+    args.log_level = "error"
+    g_args, g_seed = GMain(args)
+
+    mw = MultiWorld(g_args.multi)
+    mw.set_seed(g_seed, g_args.race, str(g_args.outputname) if g_args.outputname else None)
+    mw.plando_options = g_args.plando
+    mw.game = g_args.game.copy()
+    mw.player_name = g_args.name.copy()
+    mw.sprite = g_args.sprite.copy()
+    mw.sprite_pool = g_args.sprite_pool.copy()
+    mw.set_options(g_args)
+    mw.set_item_links()
+    mw.state = CollectionState(mw)
+
+    AutoWorld.call_all(mw, "generate_early")
+
+    # Same starting inventory handling as Main.main, in the same order: it creates items, and worlds
+    # are free to draw from their random while doing so.
+    for player in mw.player_ids:
+        options = mw.worlds[player].options
+        for item_name, count in options.start_inventory.value.items():
+            for _ in range(count):
+                mw.push_precollected(mw.create_item(item_name, player))
+        for item_name, count in getattr(options, "start_inventory_from_pool", StartInventoryPool({})).value.items():
+            for _ in range(count):
+                mw.push_precollected(mw.create_item(item_name, player))
+            early = mw.early_items[player].get(item_name, 0)
+            if early:
+                mw.early_items[player][item_name] = max(0, early - count)
+                remaining_count = count - early
+                if remaining_count > 0:
+                    local_early = mw.local_early_items[player].get(item_name, 0)
+                    if local_early:
+                        mw.early_items[player][item_name] = max(0, local_early - remaining_count)
+        options.non_local_items.value -= options.local_items.value
+        options.non_local_items.value -= set(mw.local_early_items[player])
+    if mw.players == 1:
+        mw.worlds[1].options.non_local_items.value = set()
+        mw.worlds[1].options.local_items.value = set()
+
+    AutoWorld.call_all(mw, "create_regions")
+    AutoWorld.call_all(mw, "create_items")
+    AutoWorld.call_all(mw, "set_rules")
+
+    for player in mw.player_ids:
+        options = mw.worlds[player].options
+        exclusion_rules(mw, player, options.exclude_locations.value)
+        options.priority_locations.value -= options.exclude_locations.value
+        for location_name in list(options.priority_locations.value):
+            try:
+                location = mw.get_location(location_name, player)
+            except KeyError:
+                continue
+            if location.progress_type != LocationProgressType.EXCLUDED:
+                location.progress_type = LocationProgressType.PRIORITY
+            else:
+                options.priority_locations.value.discard(location_name)
+    if mw.players > 1:
+        locality_rules(mw)
+    mw.plando_item_blocks = parse_planned_blocks(mw)
+
+    AutoWorld.call_all(mw, "connect_entrances")
+    AutoWorld.call_all(mw, "generate_basic")
+    return mw
+
+
+def _load_exact_multiworld(arch_path: str, yaml_dir: str, arch: dict) -> MultiWorld | None:
+    """The real multiworld, rebuilt and checked against the multidata, or None to fall back."""
+    seed = _read_generation_seed(arch_path)
+    if seed is None:
+        print("exact regeneration: no seed (no spoiler), falling back", file=sys.stderr)
+        return None
+    try:
+        mw = build_exact_multiworld(yaml_dir, seed)
+    except Exception as exc:
+        print(f"exact regeneration failed, falling back: {exc}", file=sys.stderr)
+        return None
+    locations = {
+        player: {loc.address for loc in mw.get_locations(player) if isinstance(loc.address, int)}
+        for player in mw.player_ids
+    }
+    precollected = {
+        player: [item.code for item in mw.precollected_items[player] if type(item.code) == int]
+        for player in mw.player_ids
+    }
+    mismatch = _exact_mismatch(locations, precollected, arch)
+    if mismatch is not None:
+        print(f"exact regeneration diverges from the multidata ({mismatch}), falling back", file=sys.stderr)
+        return None
+    return mw
+
+
+# ---------------------------------------------------------------------------
+# Replaying a world's own rolls from its slot_data
+# ---------------------------------------------------------------------------
+# The regeneration below rolls everything again with a fresh seed. A UT-aware world gets the seed's
+# values back through interpret_slot_data / re_gen_passthrough; a world without that hook but whose
+# fill_slot_data writes its rolls out can still be replayed here, stage by stage, at the point where
+# the world reads each value.
+
+def _hk_replay(stage: str, world, slot_data: dict) -> None:
+    """Hollow Knight rolls its shop slot counts (options drawn from a random range), the price of
+    every shop location and the charm notch costs - all of which logic reads. fill_slot_data writes
+    them back as `options`, `location_costs`, `notch_costs` and `grub_count`."""
+    if stage == "before_generate_early":
+        # Shop slot counts decide which shop locations exist; create_items reads them.
+        for name, value in (slot_data.get("options") or {}).items():
+            option = getattr(world.options, name, None)
+            if option is not None:
+                option.value = value
+    elif stage == "after_generate_early":
+        # generate_early rolls both; logic reads them afterwards.
+        if slot_data.get("notch_costs"):
+            world.charm_costs = list(slot_data["notch_costs"])
+        if "grub_count" in slot_data:
+            world.grub_count = slot_data["grub_count"]
+            world.grub_player_count = {world.player: slot_data["grub_count"]}
+    elif stage == "after_create_items":
+        # create_items spreads ExtraShopSlots over the shops at random, so even with the seed's slot
+        # options each shop ends up with its own count. Every shop location has a price, so the
+        # seed's location_costs says how many each shop really has: trim the extra slots (the last
+        # ones created) and create the missing ones, which HK numbers in sequence.
+        costs = slot_data.get("location_costs") or {}
+        if costs:
+            region = world.multiworld.get_region("Menu", world.player)
+            for shop, shop_locations in world.created_multi_locations.items():
+                wanted = sum(
+                    1 for name in costs
+                    if name.rsplit("_", 1)[0] == shop and name.rsplit("_", 1)[-1].isdigit()
+                )
+                while len(shop_locations) > wanted:
+                    region.locations.remove(shop_locations.pop())
+                while len(shop_locations) < wanted:
+                    world.create_location(shop)
+    elif stage == "before_set_rules":
+        # set_rules captures each cost in a closure: the seed's prices must be in place first.
+        costs = slot_data.get("location_costs") or {}
+        for location in world.multiworld.get_locations(world.player):
+            if location.name in costs:
+                location.costs = dict(costs[location.name])
+
+
+_SLOT_DATA_REPLAY = {"Hollow Knight": _hk_replay}
+
+
+def _replay_slot_data(stage: str, world, slot_data: dict) -> None:
+    replay = _SLOT_DATA_REPLAY.get(world.game)
+    if replay is not None and slot_data:
+        replay(stage, world, slot_data)
+
+
+# ---------------------------------------------------------------------------
+# Fake AP generation (fallback: one player, fresh seed)
 # ---------------------------------------------------------------------------
 
 def build_multiworld(game: str, player_name: str, yaml_path: str, slot_data: dict) -> tuple[MultiWorld, int]:
@@ -405,9 +620,17 @@ def build_multiworld(game: str, player_name: str, yaml_path: str, slot_data: dic
     mw.player_name = {1: player_name}
     mw.set_options(g_args)
     mw.state = CollectionState(mw)
+    world = mw.worlds[1]
 
+    _replay_slot_data("before_generate_early", world, slot_data)
     for step in gen_steps:
+        if step == "set_rules":
+            _replay_slot_data("before_set_rules", world, slot_data)
         AutoWorld.call_all(mw, step)
+        if step == "generate_early":
+            _replay_slot_data("after_generate_early", world, slot_data)
+        if step == "create_items":
+            _replay_slot_data("after_create_items", world, slot_data)
         if step == "set_rules":
             exclusion_rules(mw, 1, mw.worlds[1].options.exclude_locations.value)
         if step == "generate_basic":
@@ -436,8 +659,16 @@ def _seed_precollected_items(mw, player_id, arch, slot, item_id_to_name) -> None
     The multidata records what was really precollected (Main.py serializes
     multiworld.precollected_items), so it is the authority. Replace rather than merge: anything the
     regeneration rolled is by definition not what the player started with.
+
+    Except events. Main.py only serializes items with an int id, so a precollected event never reaches
+    the multidata - and some worlds start from one: Hollow Knight pushes its start location
+    (`Tutorial_01`) as an event in generate_early. Dropping it left the player with no start region and
+    nothing ever in logic. Events are the world's own bookkeeping, not a random roll, so the ones the
+    regeneration pushed are kept.
     """
     precollected_ids = arch.get("precollected_items", {}).get(slot, [])
+
+    events = [item for item in mw.precollected_items.get(player_id, []) if getattr(item, "code", None) is None]
 
     items = []
     for item_id in precollected_ids:
@@ -453,7 +684,7 @@ def _seed_precollected_items(mw, player_id, arch, slot, item_id_to_name) -> None
             # starting item skews the answer; taking down the whole pass would remove it entirely.
             print(f"Warning: could not recreate precollected item '{name}': {exc}", file=sys.stderr)
 
-    mw.precollected_items[player_id] = items
+    mw.precollected_items[player_id] = events + items
 
 
 # ---------------------------------------------------------------------------
@@ -513,8 +744,14 @@ def main() -> None:
         sys.exit(1)
     yaml_path = str(yaml_candidates[0])
 
+    exact_mw = _load_exact_multiworld(args.archipelago, str(Path(yaml_path).parent), arch)
     try:
-        mw, player_id = build_multiworld(game, player_name, yaml_path, slot_data)
+        if exact_mw is not None:
+            # The real world: slot numbers are the generation's, the starting inventory is the one
+            # handed out, every roll is the seed's.
+            mw, player_id = exact_mw, slot
+        else:
+            mw, player_id = build_multiworld(game, player_name, yaml_path, slot_data)
     except Exception as exc:
         # A single world that fails to fake-generate (e.g. a buggy apworld whose generate_early
         # raises) must not take down the whole daemon and surface to the bridge as an opaque
@@ -531,7 +768,8 @@ def main() -> None:
     }
     _world_id_to_name: dict[int, str] = mw.worlds[player_id].item_id_to_name
     item_id_to_name: dict[int, str] = {**_world_id_to_name, **_arch_id_to_name}
-    _seed_precollected_items(mw, player_id, arch, slot, item_id_to_name)
+    if exact_mw is None:
+        _seed_precollected_items(mw, player_id, arch, slot, item_id_to_name)
     event_locations = [loc for loc in mw.get_locations(player_id) if not loc.address]
 
     # ── Per-request computation (fast once multiworld is loaded) ──────────────
