@@ -143,21 +143,10 @@ _worlds_stub.World = World
 
 # Patch Options.Choice metaclass to allow apworlds that define `option_random`.
 # Archipelago reserves "random" as a keyword; some apworlds use it anyway.
-# On AssertionError we strip option_random* and retry so the world still loads.
-import Options as _Options_mod  # noqa: E402
-_ChoiceMeta = type(_Options_mod.Choice)
-_orig_choice_meta_new = _ChoiceMeta.__new__
-
-def _permissive_choice_meta_new(mcs, name, bases, namespace, **kwargs):
-    try:
-        return _orig_choice_meta_new(mcs, name, bases, namespace, **kwargs)
-    except AssertionError as _exc:
-        if "random" in str(_exc).lower():
-            _filtered = {k: v for k, v in namespace.items() if not k.startswith("option_random")}
-            return _orig_choice_meta_new(mcs, name, bases, _filtered, **kwargs)
-        raise
-
-_ChoiceMeta.__new__ = _permissive_choice_meta_new
+# On AssertionError we strip option_random* and retry so the world still loads. Shared with every
+# script that loads apworlds (generation_setup.py, story 9.55).
+from generation_setup import install_permissive_choice_meta  # noqa: E402
+install_permissive_choice_meta()
 
 # Expose worlds/__init__.py public symbols that apworlds import directly.
 # Without these, apworlds doing `from worlds import user_folder` crash with
