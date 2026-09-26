@@ -157,24 +157,10 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 # the metaclass asserts. On that assertion we strip the offending members and retry, so the world
 # still loads - rune4, smash64 and untitled_goose_game all need this.
 #
-# Copied from generate_template.py, which has had it all along: a world whose template generates has
-# to be loadable here too. Strictly failure-reducing - it only runs where the original raised.
-import Options as _Options_mod  # noqa: E402
-_ChoiceMeta = type(_Options_mod.Choice)
-_orig_choice_meta_new = _ChoiceMeta.__new__
-
-
-def _permissive_choice_meta_new(mcs, name, bases, namespace, **kwargs):
-    try:
-        return _orig_choice_meta_new(mcs, name, bases, namespace, **kwargs)
-    except AssertionError as _exc:
-        if "random" in str(_exc).lower():
-            _filtered = {k: v for k, v in namespace.items() if not k.startswith("option_random")}
-            return _orig_choice_meta_new(mcs, name, bases, _filtered, **kwargs)
-        raise
-
-
-_ChoiceMeta.__new__ = _permissive_choice_meta_new
+# Shared with every script that loads apworlds (generation_setup.py, story 9.55): a world whose
+# template generates has to be loadable here too.
+from generation_setup import install_permissive_choice_meta  # noqa: E402
+install_permissive_choice_meta()
 
 # ─── World imports: honest first, stub only what is truly missing ────────────
 # See apworld_import.py: a world that ships its own fallback for a missing dependency

@@ -159,6 +159,12 @@ from apworld_import import import_world  # noqa: E402
 
 warnings.filterwarnings("ignore")  # silence _speedups warning
 
+# The same preparation as generate_multiworld.py (story 9.55): Generate runs on every yaml of the
+# session here, so a world that loads or a player option that generates there must do so here too,
+# or the run generates and then has no reachability at all. Armed before any world is imported.
+from generation_setup import apply_host_gates, install_permissive_choice_meta  # noqa: E402
+install_permissive_choice_meta()
+
 from BaseClasses import CollectionState, LocationProgressType, MultiWorld, ItemClassification  # noqa: E402
 from worlds import AutoWorld  # noqa: E402
 import worlds as _worlds_pkg  # noqa: E402
@@ -285,6 +291,13 @@ _worlds_pkg.network_data_package["games"].update({
     cls.game: cls.get_data_package_data()
     for cls in _worlds_pkg.AutoWorldRegister.world_types.values()
 })
+
+# Host permission gates of every loaded world, as generate_multiworld.py opens them before Generate:
+# without them a player option behind a gate makes Generate raise, on both reachability paths.
+try:
+    apply_host_gates(_worlds_pkg.AutoWorldRegister.world_types)
+except Exception as _gate_exc:
+    print(f"Warning: host-gate derivation skipped: {_gate_exc}", file=sys.stderr)
 
 # ---------------------------------------------------------------------------
 # Save helpers (same as bridge)

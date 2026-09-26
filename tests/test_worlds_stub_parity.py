@@ -12,7 +12,8 @@ Two mechanisms carry that risk, and both lived in `generate_template.py` alone f
   generation happens to survive without it, because a neighbouring world imported the submodule
   first; a script that loads one world in isolation has no neighbour.
 - `_permissive_choice_meta_new` strips `option_random*` when Archipelago's metaclass asserts on it.
-  Three worlds - rune4, smash64, untitled_goose_game - define it anyway.
+  Three worlds - rune4, smash64, untitled_goose_game - define it anyway. It now lives once in
+  generation_setup.py and every script calls it (story 9.55, guarded by test_generation_setup.py).
 
 Both are strictly failure-reducing: they only run where the unpatched code raises. There is no
 reason for one script to have them and another not, which is exactly why this test exists.
@@ -29,7 +30,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # generate_template.py first: it is the reference, having carried both mechanisms all along.
 SCRIPTS = ["generate_template.py", "generate_multiworld.py", "introspect_options.py"]
 
-REQUIRED_FUNCTIONS = ["_worlds_getattr", "_permissive_choice_meta_new"]
+REQUIRED_FUNCTIONS = ["_worlds_getattr"]
 
 
 def _parse(script: str) -> ast.Module:
