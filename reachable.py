@@ -341,6 +341,64 @@ def load_archipelago(path: str) -> dict:
 # Fake AP generation
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Replaying a world's own rolls from its slot_data
+# ---------------------------------------------------------------------------
+# The regeneration below rolls everything again with a fresh seed. A UT-aware world gets the seed's
+# values back through interpret_slot_data / re_gen_passthrough; a world without that hook but whose
+# fill_slot_data writes its rolls out can still be replayed here, stage by stage, at the point where
+# the world reads each value.
+
+def _hk_replay(stage: str, world, slot_data: dict) -> None:
+    """Hollow Knight rolls its shop slot counts (options drawn from a random range), the price of
+    every shop location and the charm notch costs - all of which logic reads. fill_slot_data writes
+    them back as `options`, `location_costs`, `notch_costs` and `grub_count`."""
+    if stage == "before_generate_early":
+        # Shop slot counts decide which shop locations exist; create_items reads them.
+        for name, value in (slot_data.get("options") or {}).items():
+            option = getattr(world.options, name, None)
+            if option is not None:
+                option.value = value
+    elif stage == "after_generate_early":
+        # generate_early rolls both; logic reads them afterwards.
+        if slot_data.get("notch_costs"):
+            world.charm_costs = list(slot_data["notch_costs"])
+        if "grub_count" in slot_data:
+            world.grub_count = slot_data["grub_count"]
+            world.grub_player_count = {world.player: slot_data["grub_count"]}
+    elif stage == "after_create_items":
+        # create_items spreads ExtraShopSlots over the shops at random, so even with the seed's slot
+        # options each shop ends up with its own count. Every shop location has a price, so the
+        # seed's location_costs says how many each shop really has: trim the extra slots (the last
+        # ones created) and create the missing ones, which HK numbers in sequence.
+        costs = slot_data.get("location_costs") or {}
+        if costs:
+            region = world.multiworld.get_region("Menu", world.player)
+            for shop, shop_locations in world.created_multi_locations.items():
+                wanted = sum(
+                    1 for name in costs
+                    if name.rsplit("_", 1)[0] == shop and name.rsplit("_", 1)[-1].isdigit()
+                )
+                while len(shop_locations) > wanted:
+                    region.locations.remove(shop_locations.pop())
+                while len(shop_locations) < wanted:
+                    world.create_location(shop)
+    elif stage == "before_set_rules":
+        # set_rules captures each cost in a closure: the seed's prices must be in place first.
+        costs = slot_data.get("location_costs") or {}
+        for location in world.multiworld.get_locations(world.player):
+            if location.name in costs:
+                location.costs = dict(costs[location.name])
+
+
+_SLOT_DATA_REPLAY = {"Hollow Knight": _hk_replay}
+
+
+def _replay_slot_data(stage: str, world, slot_data: dict) -> None:
+    replay = _SLOT_DATA_REPLAY.get(world.game)
+    if replay is not None and slot_data:
+        replay(stage, world, slot_data)
+
 def build_multiworld(game: str, player_name: str, yaml_path: str, slot_data: dict) -> tuple[MultiWorld, int]:
     """Regenerate a minimal MultiWorld (rules only, no item placement)."""
     from Generate import main as GMain, mystery_argparse
@@ -405,9 +463,17 @@ def build_multiworld(game: str, player_name: str, yaml_path: str, slot_data: dic
     mw.player_name = {1: player_name}
     mw.set_options(g_args)
     mw.state = CollectionState(mw)
+    world = mw.worlds[1]
 
+    _replay_slot_data("before_generate_early", world, slot_data)
     for step in gen_steps:
+        if step == "set_rules":
+            _replay_slot_data("before_set_rules", world, slot_data)
         AutoWorld.call_all(mw, step)
+        if step == "generate_early":
+            _replay_slot_data("after_generate_early", world, slot_data)
+        if step == "create_items":
+            _replay_slot_data("after_create_items", world, slot_data)
         if step == "set_rules":
             exclusion_rules(mw, 1, mw.worlds[1].options.exclude_locations.value)
         if step == "generate_basic":
