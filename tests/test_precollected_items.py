@@ -35,17 +35,28 @@ def _load_seed_precollected_items():
     return namespace["_seed_precollected_items"]
 
 
+class FakeItem(str):
+    """An item as AP's Item: an id (`code`) for a real item, None for an event."""
+
+    def __new__(cls, label: str, code: int | None):
+        item = super().__new__(cls, label)
+        item.code = code
+        return item
+
+
 class FakeMultiWorld:
     """Stands in for the regenerated MultiWorld: it already rolled a starting inventory of its own."""
 
-    def __init__(self, rolled: list[str], creatable: set[str] | None = None) -> None:
-        self.precollected_items = {1: [f"item:{name}" for name in rolled]}
+    def __init__(self, rolled: list[str], creatable: set[str] | None = None, events: list[str] = ()) -> None:
+        self.precollected_items = {
+            1: [FakeItem(f"event:{name}", None) for name in events] + [FakeItem(f"item:{name}", 1) for name in rolled],
+        }
         self._creatable = creatable
 
     def create_item(self, name: str, player: int) -> str:
         if self._creatable is not None and name not in self._creatable:
             raise KeyError(name)
-        return f"item:{name}"
+        return FakeItem(f"item:{name}", 1)
 
 
 @pytest.fixture(name="seed_precollected_items")
@@ -114,3 +125,16 @@ def test_a_multidata_without_the_key_leaves_an_empty_inventory(seed_precollected
     seed_precollected_items(mw, 1, {}, 2, {})
 
     assert mw.precollected_items[1] == []
+
+
+def test_a_precollected_event_of_the_regeneration_is_kept(seed_precollected_items):
+    """Hollow Knight pushes its start location (`Tutorial_01`) as a precollected *event*: no id, so
+    Main.py never writes it to the multidata (it keeps int codes only). Replacing the whole inventory
+    dropped it, and with no start region nothing was ever reachable - every HK slot sat in BK with
+    355 locations and 0 in logic. Events are the world's own bookkeeping, not a random roll: keep them.
+    """
+    mw = FakeMultiWorld(rolled=["Laser Love"], events=["Tutorial_01"])
+
+    seed_precollected_items(mw, 1, {"precollected_items": {2: [7000]}}, 2, {7000: "Heartbreak I"})
+
+    assert mw.precollected_items[1] == ["event:Tutorial_01", "item:Heartbreak I"]

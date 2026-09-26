@@ -436,8 +436,16 @@ def _seed_precollected_items(mw, player_id, arch, slot, item_id_to_name) -> None
     The multidata records what was really precollected (Main.py serializes
     multiworld.precollected_items), so it is the authority. Replace rather than merge: anything the
     regeneration rolled is by definition not what the player started with.
+
+    Except events. Main.py only serializes items with an int id, so a precollected event never reaches
+    the multidata - and some worlds start from one: Hollow Knight pushes its start location
+    (`Tutorial_01`) as an event in generate_early. Dropping it left the player with no start region and
+    nothing ever in logic. Events are the world's own bookkeeping, not a random roll, so the ones the
+    regeneration pushed are kept.
     """
     precollected_ids = arch.get("precollected_items", {}).get(slot, [])
+
+    events = [item for item in mw.precollected_items.get(player_id, []) if getattr(item, "code", None) is None]
 
     items = []
     for item_id in precollected_ids:
@@ -453,7 +461,7 @@ def _seed_precollected_items(mw, player_id, arch, slot, item_id_to_name) -> None
             # starting item skews the answer; taking down the whole pass would remove it entirely.
             print(f"Warning: could not recreate precollected item '{name}': {exc}", file=sys.stderr)
 
-    mw.precollected_items[player_id] = items
+    mw.precollected_items[player_id] = events + items
 
 
 # ---------------------------------------------------------------------------
