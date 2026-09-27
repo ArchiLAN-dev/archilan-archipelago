@@ -161,7 +161,12 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 
 # Permissive Choice metaclass (rune4, smash64, untitled_goose_game) and host permission gates: the
 # preparation every script that loads apworlds or generates shares - see generation_setup.py.
-from generation_setup import apply_host_gates, install_permissive_choice_meta  # noqa: E402
+from generation_setup import (  # noqa: E402
+    apply_host_gates,
+    install_permissive_choice_meta,
+    soften_accessibility_check,
+    warning_line,
+)
 install_permissive_choice_meta()
 
 
@@ -351,12 +356,19 @@ if __name__ == "__main__":
         print(f"{FAILURE_SENTINEL} {_json.dumps(record, ensure_ascii=False)}",
               file=sys.stderr, flush=True)
 
+    # Story 38.12: an unmet accessibility check warns, as in the official Launcher, instead of failing a
+    # game that stays beatable. Each warning is reported to the orchestrator once the game is generated.
+    _warnings = soften_accessibility_check()
+
     try:
         erargs, seed = Generate.main()
         ERmain(erargs, seed)
     except Exception as _exc:
         _emit_failure(_exc)
         sys.exit(1)
+
+    for _warning in _warnings:
+        print(warning_line(_warning), file=sys.stderr, flush=True)
 
     # Print the generated output filename to stdout for the orchestrator to capture.
     _out_dir = pathlib.Path(getattr(erargs, "outputpath", "/data/output"))
