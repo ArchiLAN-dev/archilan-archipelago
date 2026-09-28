@@ -116,6 +116,18 @@ class Stub:
     def keys(self): return {}.keys()
 
 
+def _stub_module_getattr(name):
+    """Answer anything with a Stub - except `__file__`.
+
+    `inspect` reads the `__file__` of every module in `sys.modules`: a stub answering it made
+    `importlib.resources.files()` fail with "'module' object is not callable" (gtfo). `__path__` must
+    keep answering, or the sub-modules of a stubbed package no longer import (zillion).
+    """
+    if name == "__file__":
+        raise AttributeError(name)
+    return Stub()
+
+
 class OnDemandStubFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     """Stubs only the module roots the retry loop proved unimportable, and only when enabled.
 
@@ -146,7 +158,7 @@ class OnDemandStubFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         return types.ModuleType(spec.name)
 
     def exec_module(self, module):
-        module.__getattr__ = lambda _n: Stub()
+        module.__getattr__ = _stub_module_getattr
 
 
 finder = OnDemandStubFinder()
