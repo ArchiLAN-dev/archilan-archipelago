@@ -69,7 +69,19 @@ if not hasattr(_orjson, "orjson"):
 
 # tkinter / _tkinter: GUI toolkit not available in headless containers.
 _tk_stub = types.ModuleType("tkinter")
-_tk_stub.__getattr__ = lambda _n: _tk_stub  # type: ignore[attr-defined]
+def _tk_getattr(name):
+    """Answer anything with the stub - except the dunders, which must stay absent.
+
+    Same lesson as `_winapi`: `inspect` reads the `__file__` of every module in `sys.modules`, and a stub
+    answering it with itself made `importlib.resources.files()` fail with "'module' object is not
+    callable" (gtfo calls it at import).
+    """
+    if name.startswith("__") and name.endswith("__"):
+        raise AttributeError(name)
+    return _tk_stub
+
+
+_tk_stub.__getattr__ = _tk_getattr  # type: ignore[attr-defined]
 for _tk_name in ("tkinter", "_tkinter", "tkinter.ttk", "tkinter.font",
                  "tkinter.messagebox", "tkinter.filedialog", "tkinter.colorchooser",
                  "tkinter.simpledialog", "tkinter.constants"):
