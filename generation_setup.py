@@ -164,3 +164,65 @@ def apply_host_gates(world_types):
     write_host_gate_yaml(gates, user_path("host.yaml"))
     if hasattr(settings.get_settings, "_cache"):
         delattr(settings.get_settings, "_cache")
+
+
+# ─── Accessibility not met: a warning, as the official Launcher does (story 38.12) ─────────────────────
+# `MultiWorld.fulfills_accessibility` raises FillError under `if __debug__:`, otherwise logs a warning and
+# returns False; `Main.main` then fails only if the game is unbeatable. The Launcher is frozen optimized
+# (`__debug__` false) and generates such a game; this image runs plain Python and failed on it - a world that
+# "works locally" was refused here. Only this check is softened: `python -O` would also drop every `assert`
+# of Archipelago, "Duplicate item reference" among them, which guards against a truly broken game.
+
+ACCESSIBILITY_MESSAGE = "Could not access required locations for accessibility check."
+WARNING_SENTINEL = "###ARCHILAN-WARNING###"
+WARNING_MESSAGE_MAX = 1200
+
+
+def soften_accessibility_check(multiworld_cls=None, fill_error_cls=None):
+    """Make an unmet accessibility check return False, as in an optimized build. Idempotent.
+
+    Returns the list the warnings are recorded in (one record per unmet check):
+    `{"type": "accessibility", "message": ..., "missing": [location names]}`.
+    """
+    if multiworld_cls is None:
+        from BaseClasses import MultiWorld as multiworld_cls
+    if fill_error_cls is None:
+        from Fill import FillError as fill_error_cls
+
+    original = multiworld_cls.fulfills_accessibility
+    if getattr(original, "_archilan_softened", None) is not None:
+        return original._archilan_softened
+
+    warnings = []
+
+    def _softened(self, *args, **kwargs):
+        try:
+            return original(self, *args, **kwargs)
+        except fill_error_cls as exc:
+            # The placements of the whole game follow the missing locations: left out, and the rest bounded.
+            message = " ".join(str(exc).split("All Placements:")[0].split())[:WARNING_MESSAGE_MAX]
+            if not message.startswith(ACCESSIBILITY_MESSAGE):
+                raise
+            warnings.append({"type": "accessibility", "message": message, "missing": _missing_locations(message)})
+            print(f"Warning: {message}", file=sys.stderr, flush=True)
+            return False
+
+    _softened._archilan_softened = warnings
+    multiworld_cls.fulfills_accessibility = _softened
+    return warnings
+
+
+def _missing_locations(message):
+    start = message.find("Missing: [")
+    end = message.find("]", start)
+    if start < 0 or end < 0:
+        return []
+    listed = message[start + len("Missing: ["):end]
+    return [name.strip() for name in listed.split(",") if name.strip()]
+
+
+def warning_line(record):
+    """The machine-readable line the orchestrator reads on stderr, next to a successful generation."""
+    import json
+
+    return f"{WARNING_SENTINEL} {json.dumps(record, ensure_ascii=False)}"

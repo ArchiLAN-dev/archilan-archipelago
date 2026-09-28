@@ -162,7 +162,7 @@ warnings.filterwarnings("ignore")  # silence _speedups warning
 # The same preparation as generate_multiworld.py (story 9.55): Generate runs on every yaml of the
 # session here, so a world that loads or a player option that generates there must do so here too,
 # or the run generates and then has no reachability at all. Armed before any world is imported.
-from generation_setup import apply_host_gates, install_permissive_choice_meta  # noqa: E402
+from generation_setup import apply_host_gates, install_permissive_choice_meta, soften_accessibility_check  # noqa: E402
 install_permissive_choice_meta()
 
 from BaseClasses import CollectionState, LocationProgressType, MultiWorld, ItemClassification  # noqa: E402
@@ -298,6 +298,10 @@ try:
     apply_host_gates(_worlds_pkg.AutoWorldRegister.world_types)
 except Exception as _gate_exc:
     print(f"Warning: host-gate derivation skipped: {_gate_exc}", file=sys.stderr)
+
+# Story 38.12: the generation this replays passed an unmet accessibility check with a warning, as the
+# Launcher does; replaying it must not fail on that check either.
+soften_accessibility_check()
 
 # ---------------------------------------------------------------------------
 # Save helpers (same as bridge)
