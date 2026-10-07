@@ -735,10 +735,14 @@ class _SlotTracker:
 
         self.dp = arch.get("datapackage", {}).get(self.game, {})
         self.id_to_loc = {v: k for k, v in self.dp.get("location_name_to_id", {}).items()}
-        self.id_to_item: dict[int, str] = {}
-        for _gdata in arch.get("datapackage", {}).values():
-            for _iname, _iid in _gdata.get("item_name_to_id", {}).items():
-                self.id_to_item[_iid] = _iname
+        # Item ids are only unique within a game: two games of a multiworld may share one (Minecraft and a
+        # custom apworld). A single table of every game gave an item the name of another game's item, so
+        # a name is always read in the game of the slot that receives the item.
+        self.items_by_game: dict[str, dict[int, str]] = {
+            _game: {_iid: _iname for _iname, _iid in _gdata.get("item_name_to_id", {}).items()}
+            for _game, _gdata in arch.get("datapackage", {}).items()
+        }
+        self.slot_games: dict[int, str] = {s: ns.game for s, ns in slot_info.items()}
         self.slot_names: dict[int, str] = {s: ns.name for s, ns in slot_info.items()}
         self.arch_locs: dict[int, tuple] = arch.get("locations", {}).get(slot, {})
 
@@ -747,7 +751,7 @@ class _SlotTracker:
         for _slot_locs in arch.get("locations", {}).values():
             for _item_id, _recv_slot, _flags in _slot_locs.values():
                 if _recv_slot == slot and _item_id > 0:
-                    self.expected_counter[self.id_to_item.get(_item_id, f"#{_item_id}")] += 1
+                    self.expected_counter[self.item_name(_item_id, slot)] += 1
 
         self.raw_spheres = arch.get("spheres", [])
 
@@ -763,6 +767,10 @@ class _SlotTracker:
             _seed_precollected_items(mw, player_id, arch, slot, self.item_id_to_name)
         self.event_locations = [loc for loc in mw.get_locations(player_id) if not loc.address]
 
+    def item_name(self, item_id: int, recv_slot: int) -> str:
+        """The item's name in the game of the slot that receives it."""
+        return self.items_by_game.get(self.slot_games.get(recv_slot, ""), {}).get(item_id, f"#{item_id}")
+
     # ── Per-request computation (fast once multiworld is loaded) ──────────────
 
     def compute(self, checked_ids: set[int], received_items: list) -> dict:
@@ -772,7 +780,7 @@ class _SlotTracker:
         received_items: list of [item_id, sender_slot, location_id] tuples/lists.
         """
         mw, player_id, slot = self.mw, self.player_id, self.slot
-        arch_locs, id_to_loc, id_to_item, slot_names = self.arch_locs, self.id_to_loc, self.id_to_item, self.slot_names
+        arch_locs, id_to_loc, slot_names = self.arch_locs, self.id_to_loc, self.slot_names
         dp, item_id_to_name = self.dp, self.item_id_to_name
         missing_ids = set(arch_locs.keys()) - checked_ids
 
@@ -803,7 +811,7 @@ class _SlotTracker:
                 "name": name,
                 "item": {
                     "id": item_id_l,
-                    "name": id_to_item.get(item_id_l, f"#{item_id_l}"),
+                    "name": self.item_name(item_id_l, recv_slot),
                     "flags": flags,
                     "slot": recv_slot,
                     "slot_name": slot_names.get(recv_slot, f"Slot {recv_slot}"),
