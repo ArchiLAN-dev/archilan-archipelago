@@ -717,98 +717,63 @@ def _seed_precollected_items(mw, player_id, arch, slot, item_id_to_name) -> None
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Trackers, daemon and main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--archipelago", required=True)
-    parser.add_argument("--yamls", required=True)
-    parser.add_argument("--apsave", required=False, default=None)
-    parser.add_argument("--slot", type=int, default=1)
-    parser.add_argument(
-        "--daemon", action="store_true",
-        help="Persistent mode: read JSON requests from stdin, write JSON results to stdout",
-    )
-    args = parser.parse_args()
+class _SlotTracker:
+    """One slot's reachability over a loaded world: the slot's static data, then one fresh
+    CollectionState per request, so a request never leaks into the next one."""
 
-    # ── One-time setup (expensive) ────────────────────────────────────────────
+    def __init__(self, arch: dict, slot: int, mw: MultiWorld, player_id: int, exact: bool) -> None:
+        slot_info = arch["slot_info"]
+        net_slot = slot_info[slot]
+        self.slot = slot
+        self.mw = mw
+        self.player_id = player_id
+        self.game: str = net_slot.game
+        self.player_name: str = net_slot.name
 
-    arch = load_archipelago(args.archipelago)
+        self.dp = arch.get("datapackage", {}).get(self.game, {})
+        self.id_to_loc = {v: k for k, v in self.dp.get("location_name_to_id", {}).items()}
+        self.id_to_item: dict[int, str] = {}
+        for _gdata in arch.get("datapackage", {}).values():
+            for _iname, _iid in _gdata.get("item_name_to_id", {}).items():
+                self.id_to_item[_iid] = _iname
+        self.slot_names: dict[int, str] = {s: ns.name for s, ns in slot_info.items()}
+        self.arch_locs: dict[int, tuple] = arch.get("locations", {}).get(slot, {})
 
-    slot_info = arch["slot_info"]
-    slot = args.slot
-    net_slot = slot_info.get(slot)
-    if net_slot is None:
-        _emit({"error": f"slot {slot} not found"})
-        sys.exit(1)
+        # Items expected for this slot - static, computed once from seed
+        self.expected_counter: Counter = Counter()
+        for _slot_locs in arch.get("locations", {}).values():
+            for _item_id, _recv_slot, _flags in _slot_locs.values():
+                if _recv_slot == slot and _item_id > 0:
+                    self.expected_counter[self.id_to_item.get(_item_id, f"#{_item_id}")] += 1
 
-    game: str = net_slot.game
-    player_name: str = net_slot.name
-    slot_data: dict = arch.get("slot_data", {}).get(slot, {})
+        self.raw_spheres = arch.get("spheres", [])
 
-    dp = arch.get("datapackage", {}).get(game, {})
-    id_to_loc = {v: k for k, v in dp.get("location_name_to_id", {}).items()}
-    id_to_item: dict[int, str] = {}
-    for _gdata in arch.get("datapackage", {}).values():
-        for _iname, _iid in _gdata.get("item_name_to_id", {}).items():
-            id_to_item[_iid] = _iname
-    slot_names: dict[int, str] = {s: ns.name for s, ns in slot_info.items()}
-    arch_locs: dict[int, tuple] = arch.get("locations", {}).get(slot, {})
-
-    # Items expected for this slot - static, computed once from seed
-    expected_counter: Counter = Counter()
-    for _slot_locs in arch.get("locations", {}).values():
-        for _item_id, _recv_slot, _flags in _slot_locs.values():
-            if _recv_slot == slot and _item_id > 0:
-                expected_counter[id_to_item.get(_item_id, f"#{_item_id}")] += 1
-
-    raw_spheres = arch.get("spheres", [])
-
-    yaml_candidates = list(Path(args.yamls).glob(f"{player_name}.yaml"))
-    if not yaml_candidates:
-        yaml_candidates = list(Path(args.yamls).glob("*.yaml"))
-    if not yaml_candidates:
-        _emit({"error": f"no yaml found in {args.yamls}"})
-        sys.exit(1)
-    yaml_path = str(yaml_candidates[0])
-
-    exact_mw = _load_exact_multiworld(args.archipelago, str(Path(yaml_path).parent), arch)
-    try:
-        if exact_mw is not None:
-            # The real world: slot numbers are the generation's, the starting inventory is the one
-            # handed out, every roll is the seed's.
-            mw, player_id = exact_mw, slot
-        else:
-            mw, player_id = build_multiworld(game, player_name, yaml_path, slot_data)
-    except Exception as exc:
-        # A single world that fails to fake-generate (e.g. a buggy apworld whose generate_early
-        # raises) must not take down the whole daemon and surface to the bridge as an opaque
-        # "reachable daemon stream closed". Emit a structured error on stdout instead: in daemon
-        # mode the bridge reads it as a non-ready line and reports it; in one-shot mode the bridge
-        # extracts {"error": ...} from stdout. Either way the other slots keep working.
-        _emit({"error": f"reachability generation failed for {game}: {exc}"})
-        sys.exit(1)
-    # Prefer the session's own datapackage for ID→name resolution: it matches the IDs
-    # in received_items exactly (same generation). The rebuilt world's item_id_to_name
-    # can diverge if the apworld was updated after the session was created.
-    _arch_id_to_name: dict[int, str] = {
-        v: k for k, v in dp.get("item_name_to_id", {}).items()
-    }
-    _world_id_to_name: dict[int, str] = mw.worlds[player_id].item_id_to_name
-    item_id_to_name: dict[int, str] = {**_world_id_to_name, **_arch_id_to_name}
-    if exact_mw is None:
-        _seed_precollected_items(mw, player_id, arch, slot, item_id_to_name)
-    event_locations = [loc for loc in mw.get_locations(player_id) if not loc.address]
+        # Prefer the session's own datapackage for ID→name resolution: it matches the IDs
+        # in received_items exactly (same generation). The rebuilt world's item_id_to_name
+        # can diverge if the apworld was updated after the session was created.
+        _arch_id_to_name: dict[int, str] = {
+            v: k for k, v in self.dp.get("item_name_to_id", {}).items()
+        }
+        _world_id_to_name: dict[int, str] = mw.worlds[player_id].item_id_to_name
+        self.item_id_to_name: dict[int, str] = {**_world_id_to_name, **_arch_id_to_name}
+        if not exact:
+            _seed_precollected_items(mw, player_id, arch, slot, self.item_id_to_name)
+        self.event_locations = [loc for loc in mw.get_locations(player_id) if not loc.address]
 
     # ── Per-request computation (fast once multiworld is loaded) ──────────────
 
-    def _compute(checked_ids: set[int], received_items: list) -> dict:
+    def compute(self, checked_ids: set[int], received_items: list) -> dict:
         """Compute reachability from in-memory state.
 
         checked_ids: set of checked location IDs for this slot.
         received_items: list of [item_id, sender_slot, location_id] tuples/lists.
         """
+        mw, player_id, slot = self.mw, self.player_id, self.slot
+        arch_locs, id_to_loc, id_to_item, slot_names = self.arch_locs, self.id_to_loc, self.id_to_item, self.slot_names
+        dp, item_id_to_name = self.dp, self.item_id_to_name
         missing_ids = set(arch_locs.keys()) - checked_ids
 
         cs = CollectionState(mw)
@@ -822,7 +787,7 @@ def main() -> None:
             cs.collect(world_item)
             item_counts[name] += 1
 
-        cs.sweep_for_advancements(locations=event_locations)
+        cs.sweep_for_advancements(locations=self.event_locations)
 
         reachable_ids: set[int] = {
             loc.address
@@ -855,7 +820,7 @@ def main() -> None:
             for name, count in item_counts.most_common()
         ]
 
-        not_received_counter = expected_counter - item_counts
+        not_received_counter = self.expected_counter - item_counts
         items_not_received_out = [
             {"id": dp.get("item_name_to_id", {}).get(name, 0), "name": name, "count": count}
             for name, count in not_received_counter.most_common()
@@ -872,7 +837,7 @@ def main() -> None:
             return entry
 
         spheres_out = []
-        for _i, _sphere in enumerate(raw_spheres):
+        for _i, _sphere in enumerate(self.raw_spheres):
             _ids = sorted(_sphere.get(slot, set()))
             if not _ids:
                 continue
@@ -898,8 +863,8 @@ def main() -> None:
             })
 
         return {
-            "game": game,
-            "player": player_name,
+            "game": self.game,
+            "player": self.player_name,
             "reachable_unchecked": reachable_unchecked,
             "reachable_checked": reachable_checked,
             "unreachable_unchecked": unreachable,
@@ -914,56 +879,166 @@ def main() -> None:
             },
         }
 
-    # ── Run mode ──────────────────────────────────────────────────────────────
+
+class _SessionTrackers:
+    """Every slot of a session over one loaded world (story 17.28).
+
+    The exact path rebuilds the whole multiworld - every player's world - so one rebuild serves all
+    slots: one daemon per session instead of one per slot cuts the startup CPU and the memory by the
+    number of slots. A slot the exact path cannot serve (no spoiler, divergence) gets its own
+    single-player rebuild, built the first time it is asked for. A slot that cannot be built keeps
+    its error: it is answered again without another try, and the other slots keep working.
+    """
+
+    def __init__(self, arch_path: str, yamls_dir: str) -> None:
+        self.arch_path = arch_path
+        self.yamls_dir = yamls_dir
+        self.arch = load_archipelago(arch_path)
+        self._exact: MultiWorld | None = None
+        self._exact_tried = False
+        self._trackers: dict[int, _SlotTracker] = {}
+        self._failures: dict[int, str] = {}
+
+    def load_exact(self) -> None:
+        """Rebuild the real multiworld once (the expensive part), or settle on the fallback."""
+        if not self._exact_tried:
+            self._exact_tried = True
+            self._exact = _load_exact_multiworld(self.arch_path, self.yamls_dir, self.arch)
+
+    def tracker(self, slot: int) -> _SlotTracker:
+        """The slot's tracker, built on first use; raises ValueError with the reason it cannot be."""
+        if slot in self._trackers:
+            return self._trackers[slot]
+        if slot in self._failures:
+            raise ValueError(self._failures[slot])
+        try:
+            tracker = self._build(slot)
+        except Exception as exc:
+            self._failures[slot] = str(exc)
+            raise ValueError(str(exc)) from exc
+        self._trackers[slot] = tracker
+        return tracker
+
+    def _build(self, slot: int) -> _SlotTracker:
+        net_slot = self.arch["slot_info"].get(slot)
+        if net_slot is None:
+            raise ValueError(f"slot {slot} not found")
+        self.load_exact()
+        if self._exact is not None:
+            # The real world: slot numbers are the generation's, the starting inventory is the one
+            # handed out, every roll is the seed's.
+            return _SlotTracker(self.arch, slot, self._exact, slot, exact=True)
+
+        game: str = net_slot.game
+        yaml_candidates = list(Path(self.yamls_dir).glob(f"{net_slot.name}.yaml"))
+        if not yaml_candidates:
+            yaml_candidates = list(Path(self.yamls_dir).glob("*.yaml"))
+        if not yaml_candidates:
+            raise ValueError(f"no yaml found in {self.yamls_dir}")
+        try:
+            mw, player_id = build_multiworld(game, net_slot.name, str(yaml_candidates[0]), self.arch.get("slot_data", {}).get(slot, {}))
+        except Exception as exc:
+            # A single world that fails to fake-generate (e.g. a buggy apworld whose generate_early
+            # raises) must not take down the whole daemon: the bridge gets a structured error for
+            # this slot and the other slots keep working.
+            raise ValueError(f"reachability generation failed for {game}: {exc}") from exc
+        return _SlotTracker(self.arch, slot, mw, player_id, exact=False)
+
+    def compute(self, slot: int, checked_ids: set[int], received_items: list) -> dict:
+        return self.tracker(slot).compute(checked_ids, received_items)
+
+
+def _serve(session: _SessionTrackers, default_slot: int | None) -> None:
+    """Daemon loop: one JSON request line in, one JSON result line out.
+
+    Request: {"slot": N, "checked_locations": [...], "received_items": [[id,sender,loc], ...]}
+    (`slot` may be left out by a per-slot daemon, which answers for its own slot).
+    """
+    _emit({"ready": True})
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+            slot = req.get("slot", default_slot)
+            if slot is None:
+                _emit({"error": "request without a slot"})
+                continue
+            _emit(session.compute(int(slot), set(req.get("checked_locations", [])), req.get("received_items", [])))
+        except Exception as exc:
+            _emit({"error": str(exc)})
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--archipelago", required=True)
+    parser.add_argument("--yamls", required=True)
+    parser.add_argument("--apsave", required=False, default=None)
+    parser.add_argument("--slot", type=int, default=1)
+    parser.add_argument(
+        "--daemon", action="store_true",
+        help="Persistent mode: read JSON requests from stdin, write JSON results to stdout",
+    )
+    parser.add_argument(
+        "--session", action="store_true",
+        help="With --daemon: one daemon for every slot of the session, each request naming its slot",
+    )
+    args = parser.parse_args()
+
+    # ── One-time setup (expensive) ────────────────────────────────────────────
+
+    session = _SessionTrackers(args.archipelago, args.yamls)
+
+    if args.daemon and args.session:
+        # Story 17.28: the world is rebuilt once, before ready; each slot's tracker on first request.
+        session.load_exact()
+        _serve(session, default_slot=None)
+        return
+
+    slot = args.slot
+    try:
+        session.tracker(slot)
+    except ValueError as exc:
+        # In daemon mode the bridge reads it as a non-ready line and reports it; in one-shot mode
+        # the bridge extracts {"error": ...} from stdout. Either way the other slots keep working.
+        _emit({"error": str(exc)})
+        sys.exit(1)
 
     if args.daemon:
-        # Signal readiness, then serve requests from stdin indefinitely.
-        # Request: {"checked_locations": [...], "received_items": [[id,sender,loc], ...]}\n
-        # Response: {result JSON}\n
-        _emit({"ready": True})
-        for line in sys.stdin:
-            line = line.strip()
-            if not line:
-                continue
+        _serve(session, default_slot=slot)
+        return
+
+    # One-shot mode: read state from env var, stdin, or fall back to --apsave.
+    checked_ids: set[int] = set()
+    received_items: list = []
+    state_from_stdin = False
+    state_env = os.environ.get("REACHABLE_STATE_JSON")
+    if state_env:
+        try:
+            req = json.loads(state_env)
+            checked_ids = set(req.get("checked_locations", []))
+            received_items = req.get("received_items", [])
+            state_from_stdin = True
+        except (json.JSONDecodeError, Exception):
+            pass
+    if not state_from_stdin and not sys.stdin.isatty():
+        line = sys.stdin.readline().strip()
+        if line:
             try:
                 req = json.loads(line)
-                checked = set(req.get("checked_locations", []))
-                ri = req.get("received_items", [])
-                result = _compute(checked, ri)
-                _emit(result)
-            except Exception as exc:
-                _emit({"error": str(exc)})
-    else:
-        # One-shot mode: read state from env var, stdin, or fall back to --apsave.
-        checked_ids: set[int] = set()
-        received_items: list = []
-        state_from_stdin = False
-        state_env = os.environ.get("REACHABLE_STATE_JSON")
-        if state_env:
-            try:
-                req = json.loads(state_env)
                 checked_ids = set(req.get("checked_locations", []))
                 received_items = req.get("received_items", [])
                 state_from_stdin = True
             except (json.JSONDecodeError, Exception):
                 pass
-        if not state_from_stdin and not sys.stdin.isatty():
-            line = sys.stdin.readline().strip()
-            if line:
-                try:
-                    req = json.loads(line)
-                    checked_ids = set(req.get("checked_locations", []))
-                    received_items = req.get("received_items", [])
-                    state_from_stdin = True
-                except (json.JSONDecodeError, Exception):
-                    pass
-        if not state_from_stdin and args.apsave and os.path.isfile(args.apsave):
-            save = load_apsave(args.apsave)
-            loc_checks = _slot_map(save.get("location_checks", {}))
-            checked_ids = set(loc_checks.get(slot, set()))
-            ri_map = _slot_map(save.get("received_items", {}))
-            received_items = ri_map.get(slot, [])
-        _emit(_compute(checked_ids, received_items))
+    if not state_from_stdin and args.apsave and os.path.isfile(args.apsave):
+        save = load_apsave(args.apsave)
+        loc_checks = _slot_map(save.get("location_checks", {}))
+        checked_ids = set(loc_checks.get(slot, set()))
+        ri_map = _slot_map(save.get("received_items", {}))
+        received_items = ri_map.get(slot, [])
+    _emit(session.compute(slot, checked_ids, received_items))
 
 
 if __name__ == "__main__":
