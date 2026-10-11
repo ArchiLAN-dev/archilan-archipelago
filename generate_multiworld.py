@@ -138,7 +138,7 @@ _worlds_stub.AutoWorldRegister = AutoWorldRegister
 _worlds_stub.World = World
 _worlds_stub.local_folder = f"{ARCH_SRC}/worlds"
 _worlds_stub.user_folder = None
-_worlds_stub.failed_world_loads = []
+_worlds_stub.failed_world_loads = {}  # dict since AP 0.6.8 (game name -> reason); Generate calls .keys()
 _worlds_stub.network_data_package = {"games": {}}
 
 

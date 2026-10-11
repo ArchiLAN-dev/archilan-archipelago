@@ -87,3 +87,27 @@ def test_no_script_furnishes_the_stub_differently() -> None:
         "these scripts furnish the `worlds` stub differently: "
         f"{sorted((everything - shared) - allowed)}"
     )
+
+
+def _stub_value(script: str, attribute: str) -> ast.expr | None:
+    for node in ast.walk(_parse(script)):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "_worlds_stub"
+                    and target.attr == attribute
+                ):
+                    return node.value
+    return None
+
+
+@pytest.mark.parametrize("script", SCRIPTS)
+def test_failed_world_loads_is_a_dict_like_archipelago_0_6_8(script: str) -> None:
+    """AP 0.6.8 made `worlds.failed_world_loads` a dict and Generate.roll_settings calls `.keys()` on it.
+
+    Left a list (0.6.7), any yaml naming a game the catalogue does not load crashed with
+    `AttributeError: 'list' object has no attribute 'keys'` instead of the "no world found" message.
+    """
+    assert isinstance(_stub_value(script, "failed_world_loads"), ast.Dict)
