@@ -133,7 +133,7 @@ try:
 except OSError:
     _user_folder = None
 _worlds_stub.user_folder = _user_folder
-_worlds_stub.failed_world_loads = []
+_worlds_stub.failed_world_loads = {}  # dict since AP 0.6.8 (game name -> reason); Generate calls .keys()
 
 
 def _worlds_getattr(name):

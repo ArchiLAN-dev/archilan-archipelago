@@ -1,6 +1,6 @@
-ARG ARCHIPELAGO_VERSION=0.6.7
+ARG ARCHIPELAGO_VERSION=0.6.8
 
-# Python 3.13 - matches the version bundled in Archipelago 0.6.7
+# Python 3.13 - matches the version bundled in Archipelago 0.6.8
 FROM python:3.13-slim
 
 ARG ARCHIPELAGO_VERSION
