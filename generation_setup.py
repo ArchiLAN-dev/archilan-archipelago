@@ -10,6 +10,7 @@ No import-time side effects: importing this module changes nothing until a funct
 Dockerfile imports it at build time to fail a missing COPY there rather than in production).
 """
 import os
+import re
 import sys
 
 
@@ -226,3 +227,61 @@ def warning_line(record):
     import json
 
     return f"{WARNING_SENTINEL} {json.dumps(record, ensure_ascii=False)}"
+
+
+def disable_file_dialogs(settings_module=None):
+    """No file dialog during a generation (story 44.1).
+
+    A host.yaml `Path` marked required and missing makes Archipelago open a file browser - kdialog, zenity,
+    then tkinter, which is a stub here: the generation then broke further on, for an unrelated reason. With
+    `no_gui`, Archipelago raises `FileNotFoundError: <file> does not exist, but <Group>.<key> is required`.
+    """
+    if settings_module is None:
+        import settings as settings_module
+    settings_module.no_gui = True
+
+
+_REQUIRED_FILE_PATTERN = re.compile(r"^(?P<file>.*) does not exist, but (?P<group>\w+)\.(?P<key>\w+) is required$")
+
+
+def required_file_record(exc, world_types):
+    """What the failed generation asked for, when it failed on a required file (story 44.1); else None.
+
+    `{"setting": "DK3Settings.rom_file", "file": "<default name>", "description", "extension", "md5s"}` -
+    the description and MD5s are read on the world's own setting, and left out when it cannot be found.
+    """
+    if not isinstance(exc, FileNotFoundError):
+        return None
+    match = _REQUIRED_FILE_PATTERN.match(" ".join(str(exc).split()))
+    if match is None:
+        return None
+
+    record = {
+        "setting": f"{match['group']}.{match['key']}",
+        "file": match["file"],
+        "extension": os.path.splitext(match["file"])[1].lower(),
+    }
+    try:
+        declared = _declared_path(match["group"], match["key"], world_types)
+        if declared is not None:
+            if getattr(declared, "description", None):
+                record["description"] = str(declared.description)
+            md5s = [m if isinstance(m, str) else m.hex() for m in getattr(declared, "md5s", None) or []]
+            if md5s:
+                record["md5s"] = md5s
+    except Exception as _e:
+        print(f"Warning: required file details skipped: {_e}", file=sys.stderr)
+
+    return record
+
+
+def _declared_path(group_name, key, world_types):
+    """The `Path` default a world's settings group declares under `key`, found by the group's class name."""
+    for world_cls in (world_types or {}).values():
+        for group in _find_settings_groups(world_cls):
+            if group.__name__ != group_name:
+                continue
+            for klass in group.__mro__:
+                if key in vars(klass):
+                    return vars(klass)[key]
+    return None
