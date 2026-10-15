@@ -275,6 +275,82 @@ def required_file_record(exc, world_types):
     return record
 
 
+REQUIRED_FILE_ARG = "--required_file"
+
+
+def take_required_file_args(argv):
+    """Consume every `--required_file <Group>.<key>=<path>` from `argv` (story 44.2); `{"Group.key": path}`.
+
+    Removed from the list so Generate's own argument parser never sees them. A malformed value is dropped
+    with a warning: the generation then fails on the missing file, with the verdict of story 44.1.
+    """
+    files = {}
+    i = 1
+    while i < len(argv):
+        if argv[i] != REQUIRED_FILE_ARG or i + 1 >= len(argv):
+            i += 1
+            continue
+        setting, sep, path = argv[i + 1].partition("=")
+        del argv[i:i + 2]
+        if not sep or not path or _SETTING_PATTERN.match(setting) is None:
+            print(f"Warning: ignored malformed {REQUIRED_FILE_ARG} value", file=sys.stderr)
+            continue
+        files[setting] = path
+    return files
+
+
+_SETTING_PATTERN = re.compile(r"^\w+\.\w+$")
+
+
+def required_file_host_settings(files, world_types):
+    """host.yaml sections pointing each required setting at its provided file; and the settings no world declares.
+
+    A failure names the settings group by its class (`DK3Settings`), host.yaml by the world's `settings_key`
+    (`dkc3_options`): the world whose package declares that class gives the section.
+    """
+    host = {}
+    unknown = []
+    for setting, path in files.items():
+        group_name, _, key = setting.partition(".")
+        section = _settings_key_of(group_name, world_types)
+        if section is None:
+            unknown.append(setting)
+            continue
+        host.setdefault(section, {})[key] = path
+    return host, unknown
+
+
+def apply_required_files(files, world_types):
+    """Point the required host.yaml settings at the files provided for this generation (story 44.2).
+
+    Same path as the host gates: merged into host.yaml, then the settings cache dropped. A setting no loaded
+    world declares is only a warning - the generation then fails on its own, with a readable verdict.
+    """
+    if not files:
+        return
+    host, unknown = required_file_host_settings(files, world_types)
+    for setting in unknown:
+        print(f"Warning: no loaded world declares the required file setting {setting}", file=sys.stderr)
+    if not host:
+        return
+    from Utils import user_path
+    import settings
+
+    write_host_gate_yaml(host, user_path("host.yaml"))
+    if hasattr(settings.get_settings, "_cache"):
+        delattr(settings.get_settings, "_cache")
+
+
+def _settings_key_of(group_name, world_types):
+    for world_cls in (world_types or {}).values():
+        key = getattr(world_cls, "settings_key", None)
+        if not isinstance(key, str) or not key:
+            continue
+        if any(group.__name__ == group_name for group in _find_settings_groups(world_cls)):
+            return key
+    return None
+
+
 def _declared_path(group_name, key, world_types):
     """The `Path` default a world's settings group declares under `key`, found by the group's class name."""
     for world_cls in (world_types or {}).values():
