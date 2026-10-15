@@ -175,7 +175,9 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 # preparation every script that loads apworlds or generates shares - see generation_setup.py.
 from generation_setup import (  # noqa: E402
     apply_host_gates,
+    disable_file_dialogs,
     install_permissive_choice_meta,
+    required_file_record,
     soften_accessibility_check,
     warning_line,
 )
@@ -330,6 +332,9 @@ if __name__ == "__main__":
     except Exception as _e:
         print(f"Warning: host-gate derivation skipped: {_e}", file=sys.stderr)
 
+    # Story 44.1: a missing required file fails with its name instead of opening a file dialog.
+    disable_file_dialogs()
+
     # ─── Structured failure record (story 9.43) ──────────────────────────────
     # The orchestrator captures stderr and the central API turns it into the message a
     # player sees. Screen-scraping a traceback is fragile: a long single-line message gets
@@ -364,6 +369,11 @@ if __name__ == "__main__":
             _m = _re.search(r"worlds\.([A-Za-z0-9_]+)\.", _note)
             if _m:
                 record["world"] = _m.group(1)
+
+        # Story 44.1: the file the world asked for, which the API names to the admin and the player.
+        _required = required_file_record(exc, _worlds_pkg.AutoWorldRegister.world_types)
+        if _required:
+            record["requiredFile"] = _required
 
         print(f"{FAILURE_SENTINEL} {_json.dumps(record, ensure_ascii=False)}",
               file=sys.stderr, flush=True)
