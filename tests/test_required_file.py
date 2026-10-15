@@ -144,3 +144,69 @@ def test_no_file_provided_leaves_host_yaml_alone(tmp_path, monkeypatch):
     generation_setup.apply_required_files({"Nope.rom_file": "/tmp/x"}, {})
 
     assert not (tmp_path / "host.yaml").exists()
+
+
+# ─── The files a world declares, read without generating (story 44.3) ──────────
+
+
+def _install_declaring_world(monkeypatch):
+    fake_settings = types.ModuleType("settings")
+    fake_settings.Group = _Group
+
+    class FilePath(_Path):
+        required = True
+        is_exe = False
+
+    fake_settings.FilePath = FilePath
+    monkeypatch.setitem(sys.modules, "settings", fake_settings)
+
+    class RomFile(FilePath):
+        description = "DKC3 (US) ROM File"
+        md5s = [b"\x12\x0a"]
+
+    class OptionalRom(FilePath):
+        required = False
+
+    class Emulator(FilePath):
+        is_exe = True
+
+    class BaseSettings(_Group):
+        rom_file = RomFile("dkc3.sfc")
+
+    class DK3Settings(BaseSettings):
+        rom_start = True
+        optional_rom = OptionalRom("other.sfc")
+        emulator = Emulator("EmuHawk.exe")
+        plain_text = "not a path"
+
+    package = types.ModuleType("worlds.fake_declaring")
+    package.DK3Settings = DK3Settings
+    monkeypatch.setitem(sys.modules, "worlds.fake_declaring", package)
+    return type("DKC3World", (), {"__module__": "worlds.fake_declaring", "game": "Donkey Kong Country 3"}), fake_settings
+
+
+def test_a_world_declares_its_required_files_inherited_ones_included(monkeypatch):
+    world, fake_settings = _install_declaring_world(monkeypatch)
+
+    assert generation_setup.declared_required_files(world, fake_settings) == [{
+        "setting": "DK3Settings.rom_file",
+        "file": "dkc3.sfc",
+        "extension": ".sfc",
+        "description": "DKC3 (US) ROM File",
+        "md5s": ["120a"],
+    }]
+
+
+def test_a_world_that_cannot_be_read_declares_nothing(monkeypatch):
+    world, _ = _install_declaring_world(monkeypatch)
+
+    assert generation_setup.declared_required_files(world, types.ModuleType("settings")) == []
+    assert generation_setup.declared_required_files(type("Broken", (), {"__module__": "worlds.none"})) == []
+
+
+def test_the_scripts_report_the_declared_files():
+    """The introspection carries them, and the generator lists them for the release's worlds."""
+    from test_generation_setup import _calls
+
+    assert "declared_required_files" in _calls("introspect_options.py")
+    assert "declared_required_files" in _calls("generate_multiworld.py")

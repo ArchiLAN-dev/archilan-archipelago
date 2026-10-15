@@ -275,6 +275,49 @@ def required_file_record(exc, world_types):
     return record
 
 
+def declared_required_files(world_cls, settings_module=None):
+    """The files a world declares it needs, read statically from its settings groups (story 44.3).
+
+    A host.yaml `FilePath` is `required` unless the world says otherwise; executables are left out (a
+    client concern). This is a superset: most of these files only serve the client, and only a failed
+    generation proves one is needed to generate. Same record shape as `required_file_record`.
+    Never raises: a world that cannot be read declares nothing.
+    """
+    try:
+        if settings_module is None:
+            import settings as settings_module
+        file_path_cls = getattr(settings_module, "FilePath", None)
+        if file_path_cls is None:
+            return []
+        records = []
+        for group in _find_settings_groups(world_cls):
+            seen = set()
+            for klass in group.__mro__:
+                for key, value in vars(klass).items():
+                    if key in seen or key.startswith("_"):
+                        continue
+                    seen.add(key)
+                    if not isinstance(value, file_path_cls):
+                        continue
+                    if not getattr(value, "required", False) or getattr(value, "is_exe", False):
+                        continue
+                    record = {
+                        "setting": f"{group.__name__}.{key}",
+                        "file": str(value),
+                        "extension": os.path.splitext(str(value))[1].lower(),
+                    }
+                    if getattr(value, "description", None):
+                        record["description"] = str(value.description)
+                    md5s = [m if isinstance(m, str) else m.hex() for m in getattr(value, "md5s", None) or []]
+                    if md5s:
+                        record["md5s"] = md5s
+                    records.append(record)
+        return sorted(records, key=lambda r: r["setting"])
+    except Exception as _e:
+        print(f"Warning: required files of {getattr(world_cls, 'game', '?')} skipped: {_e}", file=sys.stderr)
+        return []
+
+
 REQUIRED_FILE_ARG = "--required_file"
 
 
