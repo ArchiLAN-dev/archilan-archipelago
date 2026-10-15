@@ -175,10 +175,12 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 # preparation every script that loads apworlds or generates shares - see generation_setup.py.
 from generation_setup import (  # noqa: E402
     apply_host_gates,
+    apply_required_files,
     disable_file_dialogs,
     install_permissive_choice_meta,
     required_file_record,
     soften_accessibility_check,
+    take_required_file_args,
     warning_line,
 )
 install_permissive_choice_meta()
@@ -291,6 +293,7 @@ if __name__ == "__main__":
             del sys.argv[_i:_i + 2]
         else:
             _i += 1
+    _required_files = take_required_file_args(sys.argv)
 
     # Build a combined apworlds directory:
     #   1. Official apworlds from the binary release (always present, even if unused)
@@ -334,6 +337,9 @@ if __name__ == "__main__":
 
     # Story 44.1: a missing required file fails with its name instead of opening a file dialog.
     disable_file_dialogs()
+
+    # Story 44.2: the files the launcher provided for this generation only (a ROM), outside /data.
+    apply_required_files(_required_files, _worlds_pkg.AutoWorldRegister.world_types)
 
     # ─── Structured failure record (story 9.43) ──────────────────────────────
     # The orchestrator captures stderr and the central API turns it into the message a

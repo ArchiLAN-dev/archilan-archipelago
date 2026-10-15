@@ -88,3 +88,59 @@ def test_file_dialogs_are_disabled():
     generation_setup.disable_file_dialogs(fake_settings)
 
     assert fake_settings.no_gui is True
+
+
+# ─── The file the launcher provides (story 44.2) ──────────────────────────────
+
+
+def test_the_required_file_arguments_are_taken_out_of_argv():
+    argv = ["generate_multiworld.py", "--player_files_path", "/data/yamls",
+            "--required_file", "DK3Settings.rom_file=/tmp/required-files/0/dkc3.sfc",
+            "--outputpath", "/data/output", "--required_file", "not-a-setting=/tmp/x", "--required_file"]
+
+    files = generation_setup.take_required_file_args(argv)
+
+    assert files == {"DK3Settings.rom_file": "/tmp/required-files/0/dkc3.sfc"}
+    assert argv == ["generate_multiworld.py", "--player_files_path", "/data/yamls",
+                    "--outputpath", "/data/output", "--required_file"]
+
+
+def test_the_host_section_is_the_settings_key_of_the_world_declaring_the_group(monkeypatch):
+    worlds = _install_world(monkeypatch)
+    worlds["Donkey Kong Country 3"].settings_key = "dkc3_options"
+
+    host, unknown = generation_setup.required_file_host_settings(
+        {"DK3Settings.rom_file": "/tmp/required-files/0/dkc3.sfc", "OOTSettings.rom_file": "/tmp/oot.z64"}, worlds)
+
+    assert host == {"dkc3_options": {"rom_file": "/tmp/required-files/0/dkc3.sfc"}}
+    assert unknown == ["OOTSettings.rom_file"]
+
+
+def test_applying_the_files_merges_host_yaml_and_drops_the_settings_cache(tmp_path, monkeypatch):
+    worlds = _install_world(monkeypatch)
+    worlds["Donkey Kong Country 3"].settings_key = "dkc3_options"
+
+    def get_settings():
+        return None
+
+    get_settings._cache = object()
+    sys.modules["settings"].get_settings = get_settings
+    monkeypatch.setitem(sys.modules, "Utils", types.SimpleNamespace(user_path=lambda name: str(tmp_path / name)))
+    (tmp_path / "host.yaml").write_text("dkc3_options:\n  release: true\n", encoding="utf-8")
+
+    generation_setup.apply_required_files({"DK3Settings.rom_file": "/tmp/required-files/0/dkc3.sfc"}, worlds)
+
+    import yaml
+
+    data = yaml.safe_load((tmp_path / "host.yaml").read_text(encoding="utf-8"))
+    assert data == {"dkc3_options": {"release": True, "rom_file": "/tmp/required-files/0/dkc3.sfc"}}
+    assert not hasattr(get_settings, "_cache")
+
+
+def test_no_file_provided_leaves_host_yaml_alone(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "Utils", types.SimpleNamespace(user_path=lambda name: str(tmp_path / name)))
+
+    generation_setup.apply_required_files({}, {})
+    generation_setup.apply_required_files({"Nope.rom_file": "/tmp/x"}, {})
+
+    assert not (tmp_path / "host.yaml").exists()

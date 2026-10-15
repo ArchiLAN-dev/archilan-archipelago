@@ -67,6 +67,12 @@ def test_every_generating_script_opens_the_host_gates(script):
     )
 
 
+def test_the_generation_points_host_yaml_at_the_provided_files():
+    """Story 44.2: the files the launcher provides reach Archipelago only through these two calls."""
+    calls = _calls("generate_multiworld.py")
+    assert "take_required_file_args" in calls and "apply_required_files" in calls
+
+
 # ─── The permissive Choice metaclass ───────────────────────────────────────────
 
 
