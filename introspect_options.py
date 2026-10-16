@@ -171,7 +171,7 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 #
 # Shared with every script that loads apworlds (generation_setup.py, story 9.55): a world whose
 # template generates has to be loadable here too.
-from generation_setup import install_permissive_choice_meta  # noqa: E402
+from generation_setup import declared_required_files, install_permissive_choice_meta  # noqa: E402
 install_permissive_choice_meta()
 
 # ─── World imports: honest first, stub only what is truly missing ────────────
@@ -440,4 +440,7 @@ try:
 except Exception:
     locations = []
 
-print(json.dumps({"options": result, "locations": locations}))
+# Story 44.3: the files this world declares (a ROM...), so the launcher can be asked for one.
+required_files = declared_required_files(world_cls)
+
+print(json.dumps({"options": result, "locations": locations, "requiredFiles": required_files}))

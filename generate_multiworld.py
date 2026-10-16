@@ -176,6 +176,7 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 from generation_setup import (  # noqa: E402
     apply_host_gates,
     apply_required_files,
+    declared_required_files,
     disable_file_dialogs,
     install_permissive_choice_meta,
     required_file_record,
@@ -294,6 +295,9 @@ if __name__ == "__main__":
         else:
             _i += 1
     _required_files = take_required_file_args(sys.argv)
+    _list_required_files = "--list_required_files" in sys.argv
+    if _list_required_files:
+        sys.argv.remove("--list_required_files")
 
     # Build a combined apworlds directory:
     #   1. Official apworlds from the binary release (always present, even if unused)
@@ -326,6 +330,24 @@ if __name__ == "__main__":
 
     print(f"DEBUG worlds loaded: {sorted(__import__('worlds').AutoWorldRegister.world_types)}",
           file=sys.stderr)
+
+    # Story 44.3: list the files the loaded worlds declare, then stop - no generation.
+    if _list_required_files:
+        # Folder worlds of the release (alttp, oot...) are imported on demand by a generation; here
+        # nothing asks for them, so each is imported once. A world that cannot load declares nothing.
+        for _folder in sorted(OFFICIAL_APWORLDS.iterdir()):
+            if _folder.is_dir() and not _folder.name.startswith("_") and _folder.name != "generic":
+                try:
+                    import_world(f"worlds.{_folder.name}")
+                except Exception as _e:
+                    print(f"Warning: failed to load {_folder.name}: {_e}", file=sys.stderr)
+        _declared = {}
+        for _game, _cls in sorted(_worlds_pkg.AutoWorldRegister.world_types.items()):
+            _files = declared_required_files(_cls)
+            if _files:
+                _declared[_game] = _files
+        print(_json.dumps(_declared, ensure_ascii=False), flush=True)
+        sys.exit(0)
 
     # Story 27.11: enable host-gated permission settings (e.g. VS
     # allow_unfair_characters) so player options requiring a host.yaml opt-in
