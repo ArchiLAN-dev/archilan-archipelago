@@ -22,8 +22,11 @@ from types import SimpleNamespace
 
 import pytest
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import generation_setup  # noqa: E402
+
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_WANTED = {"_SessionTrackers", "_serve"}
+_WANTED = {"_SessionTrackers", "_serve", "RequiredFileUnavailable", "_error_payload"}
 
 
 class _Tracker:
@@ -48,9 +51,11 @@ def _load(exact: object | None, emitted: list, built: list) -> dict:
         built.append(name)
         if name == "broken":
             raise RuntimeError("generate_early raised")
+        if name == "rom":
+            raise FileNotFoundError("lttp.sfc does not exist, but ALTTPSettings.rom_file is required")
         return object(), 1
 
-    arch = {"slot_info": {1: SimpleNamespace(game="A", name="alice"), 2: SimpleNamespace(game="B", name="broken")}}
+    arch = {"slot_info": {1: SimpleNamespace(game="A", name="alice"), 2: SimpleNamespace(game="B", name="broken"), 3: SimpleNamespace(game="A Link to the Past", name="rom")}}
     namespace: dict = {
         "MultiWorld": object,
         "_SlotTracker": _Tracker,
@@ -62,6 +67,8 @@ def _load(exact: object | None, emitted: list, built: list) -> dict:
         "json": json,
         "sys": sys,
         "loads": loads,
+        "required_file_record": generation_setup.required_file_record,
+        "AutoWorld": SimpleNamespace(AutoWorldRegister=SimpleNamespace(world_types={})),
     }
     exec(compile(ast.Module(body=body, type_ignores=[]), "reachable.py", "exec"), namespace)
     return namespace
@@ -126,3 +133,21 @@ def test_a_per_slot_daemon_still_answers_requests_without_a_slot(monkeypatch: py
     ns["_serve"](ns["_SessionTrackers"]("run.archipelago", "/yamls"), default_slot=1)
 
     assert emitted[1]["slot"] == 1
+
+
+def test_a_world_reading_its_file_is_named_and_stays_its_own(tmp_path: Path) -> None:
+    """Story 44.4: the slot whose world reads its ROM to build its logic says so; the others are tracked."""
+    for name in ("alice", "broken", "rom"):
+        (tmp_path / f"{name}.yaml").write_text("game: x", encoding="utf-8")
+    emitted: list = []
+    ns = _load(None, emitted, [])
+    session = ns["_SessionTrackers"]("run.archipelago", str(tmp_path))
+
+    with pytest.raises(ns["RequiredFileUnavailable"], match="il a besoin du fichier « lttp.sfc »"):
+        session.tracker(3)
+    assert not session.tracker(1).exact
+
+    payload = ns["_error_payload"](ns["RequiredFileUnavailable"]({"setting": "ALTTPSettings.rom_file", "file": "lttp.sfc", "extension": ".sfc"}))
+    assert payload["requiredFile"]["setting"] == "ALTTPSettings.rom_file"
+    assert "qu'ArchiLAN ne conserve pas" in payload["error"]
+    assert ns["_error_payload"](ValueError("boom")) == {"error": "boom"}
