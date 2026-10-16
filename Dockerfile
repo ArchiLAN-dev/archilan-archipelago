@@ -86,6 +86,11 @@ COPY protocol_io.py /reachable/protocol_io.py
 COPY read_save.py /readsave/read_save.py
 COPY ap_server.sh /ap_server.sh
 COPY entrypoint.sh /entrypoint.sh
+# Story 38.17: the song list the beat_saber apworld draws from. It downloads it on its first generation and
+# writes it to `/Archipelago/data` (the path it derives from a world unpacked under /tmp); a sealed container
+# can do neither, so the list ships here, refreshed by scripts/refresh_beat_saber_maps.py. Read-only: the
+# apworld only writes when the file is missing.
+COPY data/beat_saber/ranked_maps.json /Archipelago/data/ranked_maps.json
 
 # Strip CRLF then mark executable. The build context may be checked out on Windows
 # (autocrlf) where these files carry CRLF; a CRLF in a script's shebang makes the
@@ -119,6 +124,10 @@ RUN for f in /usr/local/bin/generate_template.py \
 # introspection died on `ModuleNotFoundError` against a real apworld hours later. These modules have
 # no import-time side effects, so importing them here is cheap and catches the whole class.
 RUN python -c "import apworld_import, option_schema, generation_setup"
+
+# Same idea for the Beat Saber song list (story 38.17): an empty or broken file would only show as a failed
+# Beat Saber generation, in production.
+RUN python -c "import json; maps = json.load(open('/Archipelago/data/ranked_maps.json', encoding='utf-8')); assert isinstance(maps, list) and len(maps) > 100, 'ranked_maps.json is empty'"
 
 # Directories Archipelago treats as always-there. A world is free to read one in its module body -
 # gtfo iterates `{local_path()}/Players` at import - and a missing directory then fails the whole

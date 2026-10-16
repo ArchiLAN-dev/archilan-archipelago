@@ -1,0 +1,49 @@
+name: Refresh Beat Saber maps
+
+# Story 38.17: the image ships the song list the beat_saber apworld draws from (data/beat_saber/ranked_maps.json),
+# because a sealed generation container cannot download it. A rebuild copies the committed list: it only moves
+# when this job opens a PR and it is merged, so a given commit always builds the same image. The PR body lists the
+# maps that left BeatLeader's ranked list since the last refresh.
+on:
+  schedule:
+    - cron: '0 6 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Refresh the list
+        id: refresh
+        run: |
+          {
+            echo 'summary<<EOF'
+            python scripts/refresh_beat_saber_maps.py
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open the PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/refresh-beat-saber-maps
+          commit-message: 'chore(data): refresh the Beat Saber song list'
+          title: 'chore(data): refresh the Beat Saber song list'
+          body: |
+            Liste des cartes classées BeatLeader embarquée dans l'image (story 38.17).
+
+            ${{ steps.refresh.outputs.summary }}
+
+            Une carte retirée peut encore servir à une partie déjà générée : à surveiller si la liste en perd beaucoup.
+          delete-branch: true
