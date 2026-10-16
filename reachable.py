@@ -174,7 +174,7 @@ warnings.filterwarnings("ignore")  # silence _speedups warning
 # The same preparation as generate_multiworld.py (story 9.55): Generate runs on every yaml of the
 # session here, so a world that loads or a player option that generates there must do so here too,
 # or the run generates and then has no reachability at all. Armed before any world is imported.
-from generation_setup import apply_host_gates, disable_file_dialogs, install_permissive_choice_meta, soften_accessibility_check  # noqa: E402
+from generation_setup import apply_host_gates, disable_file_dialogs, install_permissive_choice_meta, required_file_record, soften_accessibility_check  # noqa: E402
 install_permissive_choice_meta()
 
 from BaseClasses import CollectionState, LocationProgressType, MultiWorld, ItemClassification  # noqa: E402
@@ -908,7 +908,7 @@ class _SessionTrackers:
         self._exact: MultiWorld | None = None
         self._exact_tried = False
         self._trackers: dict[int, _SlotTracker] = {}
-        self._failures: dict[int, str] = {}
+        self._failures: dict[int, ValueError] = {}
 
     def load_exact(self) -> None:
         """Rebuild the real multiworld once (the expensive part), or settle on the fallback."""
@@ -921,11 +921,14 @@ class _SessionTrackers:
         if slot in self._trackers:
             return self._trackers[slot]
         if slot in self._failures:
-            raise ValueError(self._failures[slot])
+            raise self._failures[slot]
         try:
             tracker = self._build(slot)
+        except RequiredFileUnavailable as exc:
+            self._failures[slot] = exc
+            raise
         except Exception as exc:
-            self._failures[slot] = str(exc)
+            self._failures[slot] = ValueError(str(exc))
             raise ValueError(str(exc)) from exc
         self._trackers[slot] = tracker
         return tracker
@@ -949,6 +952,11 @@ class _SessionTrackers:
         try:
             mw, player_id = build_multiworld(game, net_slot.name, str(yaml_candidates[0]), self.arch.get("slot_data", {}).get(slot, {}))
         except Exception as exc:
+            # Story 44.4: a world that reads the player's file (a ROM) while building its logic cannot be
+            # tracked without it, and ArchiLAN never keeps it. Said in words, with the file named.
+            required = required_file_record(exc, AutoWorld.AutoWorldRegister.world_types)
+            if required is not None:
+                raise RequiredFileUnavailable(required) from exc
             # A single world that fails to fake-generate (e.g. a buggy apworld whose generate_early
             # raises) must not take down the whole daemon: the bridge gets a structured error for
             # this slot and the other slots keep working.
@@ -957,6 +965,29 @@ class _SessionTrackers:
 
     def compute(self, slot: int, checked_ids: set[int], received_items: list) -> dict:
         return self.tracker(slot).compute(checked_ids, received_items)
+
+
+class RequiredFileUnavailable(ValueError):
+    """The slot's world reads the player's file while building its logic (story 44.4): no tracking without it."""
+
+    def __init__(self, record: dict):
+        self.record = record
+        name = record.get("description") or record.get("file") or record.get("setting")
+        super().__init__(
+            f"Le suivi de ce jeu n'est pas disponible : il a besoin du fichier « {name} », "
+            "qu'ArchiLAN ne conserve pas après la génération."
+        )
+
+
+def _error_payload(exc: Exception) -> dict:
+    """The error line the bridge relays; it names the missing file when that is the reason."""
+    payload = {"error": str(exc)}
+    record = getattr(exc, "record", None)
+    if record is None and isinstance(exc.__cause__, RequiredFileUnavailable):
+        record = exc.__cause__.record
+    if record is not None:
+        payload["requiredFile"] = record
+    return payload
 
 
 def _serve(session: _SessionTrackers, default_slot: int | None) -> None:
@@ -978,7 +1009,7 @@ def _serve(session: _SessionTrackers, default_slot: int | None) -> None:
                 continue
             _emit(session.compute(int(slot), set(req.get("checked_locations", [])), req.get("received_items", [])))
         except Exception as exc:
-            _emit({"error": str(exc)})
+            _emit(_error_payload(exc))
 
 
 def main() -> None:
@@ -1013,7 +1044,7 @@ def main() -> None:
     except ValueError as exc:
         # In daemon mode the bridge reads it as a non-ready line and reports it; in one-shot mode
         # the bridge extracts {"error": ...} from stdout. Either way the other slots keep working.
-        _emit({"error": str(exc)})
+        _emit(_error_payload(exc))
         sys.exit(1)
 
     if args.daemon:
