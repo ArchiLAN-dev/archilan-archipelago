@@ -7,7 +7,7 @@ and the seed is on the first line of the spoiler written next to the multidata. 
 whole multiworld with it reproduced a real 10-player run exactly (2729 locations, spheres, starting
 inventories).
 
-`_read_generation_seed` finds that seed; `_exact_mismatch` is the guard that proves the rebuilt
+`_read_generation_seed` finds that seed; `_exact_mismatches` is the guard that proves the rebuilt
 world is the real one before it is trusted (an AP upgrade or a changed apworld breaks the
 reproduction, and the pass then falls back on the single-player rebuild). Both are compiled straight
 from reachable.py: that module imports Archipelago at module level, which only exists inside the AP
@@ -22,7 +22,7 @@ import re
 import zipfile
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_WANTED = {"_read_generation_seed", "_exact_mismatch", "_SEED_LINE"}
+_WANTED = {"_read_generation_seed", "_exact_mismatches", "_SEED_LINE"}
 
 SPOILER = "﻿Archipelago Version 0.6.7  -  Seed: 3542097186775176328\n\nFilling Algorithm: balanced\n"
 
@@ -71,25 +71,33 @@ ARCH = {
 
 
 def test_a_faithful_regeneration_passes_the_guard():
-    mismatch = _load()["_exact_mismatch"]({1: {101, 102}, 2: {201}}, {1: [900], 2: []}, ARCH)
+    mismatches = _load()["_exact_mismatches"]({1: {101, 102}, 2: {201}}, {1: [900], 2: []}, ARCH)
 
-    assert mismatch is None
+    assert mismatches == {}
 
 
 def test_a_different_set_of_locations_is_caught():
     """What an AP upgrade or a re-uploaded apworld does: the world no longer rolls the same way."""
-    mismatch = _load()["_exact_mismatch"]({1: {101, 103}, 2: {201}}, {1: [900], 2: []}, ARCH)
+    mismatches = _load()["_exact_mismatches"]({1: {101, 103}, 2: {201}}, {1: [900], 2: []}, ARCH)
 
-    assert mismatch is not None and "slot 1" in mismatch
+    assert mismatches == {1: "locations differ"}
 
 
 def test_a_different_starting_inventory_is_caught():
-    mismatch = _load()["_exact_mismatch"]({1: {101, 102}, 2: {201}}, {1: [901], 2: []}, ARCH)
+    mismatches = _load()["_exact_mismatches"]({1: {101, 102}, 2: {201}}, {1: [901], 2: []}, ARCH)
 
-    assert mismatch is not None and "slot 1" in mismatch
+    assert mismatches == {1: "starting inventory differs"}
 
 
 def test_a_missing_slot_is_caught():
-    mismatch = _load()["_exact_mismatch"]({1: {101, 102}}, {1: [900]}, ARCH)
+    mismatches = _load()["_exact_mismatches"]({1: {101, 102}}, {1: [900]}, ARCH)
 
-    assert mismatch is not None and "slot 2" in mismatch
+    assert mismatches == {2: "locations differ"}
+
+
+def test_one_slot_that_rolls_differently_leaves_the_others_exact():
+    """Story 17.31: Pokemon Battle Revolution draws its starting colosseums from a set; only its own slot
+    is off, the other worlds' rolls are the seed's."""
+    mismatches = _load()["_exact_mismatches"]({1: {101, 102}, 2: {201}}, {1: [900], 2: [55]}, ARCH)
+
+    assert mismatches == {2: "starting inventory differs"}
