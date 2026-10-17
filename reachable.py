@@ -405,20 +405,26 @@ def _read_generation_seed(arch_path: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _exact_mismatch(locations: dict, precollected: dict, arch: dict) -> str | None:
-    """Why the rebuilt world is not the one the multidata describes, or None when it is.
+def _exact_mismatches(locations: dict, precollected: dict, arch: dict) -> dict[int, str]:
+    """The slots whose rebuilt world is not the one the multidata describes, each with the reason.
 
     locations: slot -> set of location ids of the rebuilt world; precollected: slot -> list of the
-    ids it precollected. Every slot of the multidata must match, not just the one asked about: a
-    divergence anywhere means the reproduction is not the real generation."""
+    ids it precollected.
+
+    Judged slot by slot (story 17.31). A world draws from its own random, seeded once for every world
+    before any of them generates, so one world that rolls differently - Pokemon Battle Revolution draws
+    its starting colosseums from a `set`, whose order changes with every Python process - leaves the
+    others' rolls alone. Throwing the whole rebuild away for it sent every slot of the session to the
+    single-player fallback, which rolls each world again with a fresh seed."""
+    mismatches: dict[int, str] = {}
     arch_locations = arch.get("locations", {})
     for slot, slot_locations in arch_locations.items():
         if locations.get(slot) != set(slot_locations):
-            return f"slot {slot}: locations differ"
+            mismatches[slot] = "locations differ"
     for slot, arch_items in arch.get("precollected_items", {}).items():
-        if slot in arch_locations and list(precollected.get(slot, [])) != list(arch_items):
-            return f"slot {slot}: starting inventory differs"
-    return None
+        if slot in arch_locations and slot not in mismatches and list(precollected.get(slot, [])) != list(arch_items):
+            mismatches[slot] = "starting inventory differs"
+    return mismatches
 
 
 def build_exact_multiworld(yaml_dir: str, seed: int) -> MultiWorld:
@@ -499,8 +505,9 @@ def build_exact_multiworld(yaml_dir: str, seed: int) -> MultiWorld:
     return mw
 
 
-def _load_exact_multiworld(arch_path: str, yaml_dir: str, arch: dict) -> MultiWorld | None:
-    """The real multiworld, rebuilt and checked against the multidata, or None to fall back."""
+def _load_exact_multiworld(arch_path: str, yaml_dir: str, arch: dict) -> tuple[MultiWorld, dict[int, str]] | None:
+    """The real multiworld, rebuilt and checked against the multidata, with the slots it does not
+    reproduce (those fall back on their own); None when no slot can use it."""
     seed = _read_generation_seed(arch_path)
     if seed is None:
         print("exact regeneration: no seed (no spoiler), falling back", file=sys.stderr)
@@ -518,11 +525,12 @@ def _load_exact_multiworld(arch_path: str, yaml_dir: str, arch: dict) -> MultiWo
         player: [item.code for item in mw.precollected_items[player] if type(item.code) == int]
         for player in mw.player_ids
     }
-    mismatch = _exact_mismatch(locations, precollected, arch)
-    if mismatch is not None:
-        print(f"exact regeneration diverges from the multidata ({mismatch}), falling back", file=sys.stderr)
+    mismatches = _exact_mismatches(locations, precollected, arch)
+    for slot, reason in sorted(mismatches.items()):
+        print(f"exact regeneration diverges from the multidata (slot {slot}: {reason}), that slot falls back", file=sys.stderr)
+    if mismatches and set(mismatches) >= set(arch.get("locations", {})):
         return None
-    return mw
+    return mw, mismatches
 
 
 # ---------------------------------------------------------------------------
@@ -575,7 +583,28 @@ def _hk_replay(stage: str, world, slot_data: dict) -> None:
                 location.costs = dict(costs[location.name])
 
 
-_SLOT_DATA_REPLAY = {"Hollow Knight": _hk_replay}
+def _pikmin2_replay(stage: str, world, slot_data: dict) -> None:
+    """Pikmin 2 rolls the onion each area starts with (which Pikmin colour the player begins with, when
+    onions are shuffled), which cave sits behind each entrance and the order of each cave's sublevels,
+    all in create_regions, and logic reads all three. fill_slot_data writes them back as
+    `onion_locations`, `caves` and `sublevels`. The apworld has no Universal Tracker hook, so its rolls
+    are put back here (story 17.31): a fresh seed gave a blue start one pass out of three, and every
+    blue-only location of the Valley of Repose read as reachable without the Blue Onion."""
+    if stage != "before_generate_early":
+        return
+    onions = slot_data.get("onion_locations")
+    caves = slot_data.get("caves")
+    sublevels = slot_data.get("sublevels")
+    # create_regions calls the three rolls; the instance attributes answer with the seed's values.
+    if isinstance(onions, dict) and onions:
+        world.onion_rando = lambda: dict(onions)
+    if isinstance(caves, dict) and caves:
+        world.cave_rando = lambda: dict(caves)
+    if isinstance(sublevels, dict) and sublevels:
+        world.sublevel_rando = lambda: {cave: list(order) for cave, order in sublevels.items()}
+
+
+_SLOT_DATA_REPLAY = {"Hollow Knight": _hk_replay, "Pikmin 2": _pikmin2_replay}
 
 
 def _replay_slot_data(stage: str, world, slot_data: dict) -> None:
@@ -897,7 +926,8 @@ class _SessionTrackers:
     The exact path rebuilds the whole multiworld - every player's world - so one rebuild serves all
     slots: one daemon per session instead of one per slot cuts the startup CPU and the memory by the
     number of slots. A slot the exact path cannot serve (no spoiler, divergence) gets its own
-    single-player rebuild, built the first time it is asked for. A slot that cannot be built keeps
+    single-player rebuild, built the first time it is asked for - and only that slot: the others keep
+    the real world (story 17.31). A slot that cannot be built keeps
     its error: it is answered again without another try, and the other slots keep working.
     """
 
@@ -906,6 +936,7 @@ class _SessionTrackers:
         self.yamls_dir = yamls_dir
         self.arch = load_archipelago(arch_path)
         self._exact: MultiWorld | None = None
+        self._exact_diverging: dict[int, str] = {}
         self._exact_tried = False
         self._trackers: dict[int, _SlotTracker] = {}
         self._failures: dict[int, ValueError] = {}
@@ -914,7 +945,9 @@ class _SessionTrackers:
         """Rebuild the real multiworld once (the expensive part), or settle on the fallback."""
         if not self._exact_tried:
             self._exact_tried = True
-            self._exact = _load_exact_multiworld(self.arch_path, self.yamls_dir, self.arch)
+            loaded = _load_exact_multiworld(self.arch_path, self.yamls_dir, self.arch)
+            if loaded is not None:
+                self._exact, self._exact_diverging = loaded
 
     def tracker(self, slot: int) -> _SlotTracker:
         """The slot's tracker, built on first use; raises ValueError with the reason it cannot be."""
@@ -938,7 +971,7 @@ class _SessionTrackers:
         if net_slot is None:
             raise ValueError(f"slot {slot} not found")
         self.load_exact()
-        if self._exact is not None:
+        if self._exact is not None and slot not in self._exact_diverging:
             # The real world: slot numbers are the generation's, the starting inventory is the one
             # handed out, every roll is the seed's.
             return _SlotTracker(self.arch, slot, self._exact, slot, exact=True)

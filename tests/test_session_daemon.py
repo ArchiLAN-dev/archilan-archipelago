@@ -37,15 +37,15 @@ class _Tracker:
         return {"slot": self.slot, "checked": sorted(checked_ids), "exact": self.exact, "counts": {}}
 
 
-def _load(exact: object | None, emitted: list, built: list) -> dict:
+def _load(exact: object | None, emitted: list, built: list, diverging: dict | None = None) -> dict:
     with open(os.path.join(_REPO_ROOT, "reachable.py"), encoding="utf-8") as handle:
         tree = ast.parse(handle.read())
     body = [node for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name in _WANTED]
     loads: list[str] = []
 
-    def load_exact(arch_path: str, yamls_dir: str, arch: dict) -> object | None:
+    def load_exact(arch_path: str, yamls_dir: str, arch: dict) -> tuple[object, dict] | None:
         loads.append(arch_path)
-        return exact
+        return None if exact is None else (exact, diverging or {})
 
     def build_multiworld(game: str, name: str, yaml_path: str, slot_data: dict) -> tuple[object, int]:
         built.append(name)
@@ -102,6 +102,21 @@ def test_without_the_exact_world_each_slot_is_rebuilt_alone_and_a_failure_stays_
     assert built == ["alice", "broken"], "a slot that failed is not rebuilt at every request"
     with pytest.raises(ValueError, match="slot 9 not found"):
         session.tracker(9)
+
+
+def test_a_slot_the_rebuild_does_not_reproduce_falls_back_alone(tmp_path: Path) -> None:
+    """Story 17.31: one world rolling differently no longer sends every slot to the fallback."""
+    (tmp_path / "alice.yaml").write_text("name: alice")
+    world = object()
+    built: list = []
+    ns = _load(world, [], built, diverging={1: "starting inventory differs"})
+    session = ns["_SessionTrackers"]("run.archipelago", str(tmp_path))
+
+    alone, real = session.tracker(1), session.tracker(2)
+
+    assert not alone.exact and alone.mw is not world
+    assert real.exact and real.mw is world
+    assert built == ["alice"], "only the diverging slot is rebuilt alone"
 
 
 def test_each_request_is_answered_for_its_slot_and_an_error_never_stops_the_daemon(monkeypatch: pytest.MonkeyPatch) -> None:

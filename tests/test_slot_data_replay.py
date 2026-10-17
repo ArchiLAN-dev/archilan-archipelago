@@ -18,7 +18,7 @@ import os
 import types
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_WANTED = {"_hk_replay", "_replay_slot_data", "_SLOT_DATA_REPLAY"}
+_WANTED = {"_hk_replay", "_pikmin2_replay", "_replay_slot_data", "_SLOT_DATA_REPLAY"}
 
 
 def _load():
@@ -164,3 +164,50 @@ def test_every_shop_gets_the_seeds_number_of_slots_after_create_items():
     assert names == set(slot_data["location_costs"])
     assert len(world.created_multi_locations["Egg_Shop"]) == 12
     assert len(world.created_multi_locations["Grubfather"]) == 16
+
+
+class FakePikmin2:
+    """The three rolls Pikmin 2 makes in create_regions, as instance methods of the world."""
+
+    game = "Pikmin 2"
+
+    def onion_rando(self) -> dict:
+        return {"VoR": "blue", "AW": "none", "PP": "none"}
+
+    def cave_rando(self) -> dict:
+        return {"EC": "SC", "SC": "EC"}
+
+    def sublevel_rando(self) -> dict:
+        return {"EC": [1, 0]}
+
+
+PIKMIN2_SLOT_DATA = {
+    "onion_locations": {"VoR": "red", "AW": "none", "PP": "none"},
+    "caves": {"EC": "EC", "SC": "SC"},
+    "sublevels": {"EC": [0, 1]},
+}
+
+
+def test_pikmin_2_rolls_its_onions_caves_and_sublevels_as_the_seed_did():
+    """Story 17.31: a fresh seed started the player with blues one pass out of three, and every
+    blue-only location read as reachable without the Blue Onion."""
+    replay = _load()
+    world = FakePikmin2()
+
+    replay("before_generate_early", world, PIKMIN2_SLOT_DATA)
+
+    assert world.onion_rando() == {"VoR": "red", "AW": "none", "PP": "none"}
+    assert world.cave_rando() == {"EC": "EC", "SC": "SC"}
+    assert world.sublevel_rando() == {"EC": [0, 1]}
+    world.sublevel_rando()["EC"].append(9)
+    assert world.sublevel_rando() == {"EC": [0, 1]}, "each call hands out a copy create_regions may change"
+
+
+def test_pikmin_2_without_its_slot_data_keeps_its_own_rolls():
+    replay = _load()
+    world = FakePikmin2()
+
+    replay("before_generate_early", world, {"debt": 10000})
+
+    assert world.onion_rando()["VoR"] == "blue"
+
