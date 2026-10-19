@@ -4,13 +4,18 @@ Introspect Archipelago apworld option types + location names and emit JSON to st
 
 Output: {"options": {"option_key": {"type": "range|choice|toggle|text|weights|dict",
                                     "defaultWeights": {key: int}}},
-         "locations": ["Location Name", ...]}
+         "locations": ["Location Name", ...],
+         "items": ["Item Name", ...],
+         "itemGroups": {"Group": ["Item Name", ...]}}
 
 "defaults", "validKeys" and "keys" are only present for "dict" (OptionDict) options.
 "keys" maps a sub-setting to the values it accepts, and is emitted ONLY from a `schema`
 declared by the option class - never guessed from a docstring or from the defaults.
 "locations" is the STATIC location list (the World class's location_name_to_id keys) -
 options-dependent locations are not reflected, so consumers treat it as a hint.
+"items" and "itemGroups" (story 9.58) are the same kind of static hint for the options that take item
+names (start_hints, start_inventory, local_items...): item_name_to_id keys, item_name_groups without the
+implicit "Everything" group.
 """
 import argparse
 import atexit
@@ -179,6 +184,7 @@ install_permissive_choice_meta()
 # takes it, and only a module proven missing gets stubbed.
 from apworld_import import import_world  # noqa: E402
 from option_schema import schema_sub_values  # noqa: E402
+from world_names import item_groups, static_items, static_locations  # noqa: E402
 
 # ── Load custom apworld ───────────────────────────────────────────────────────
 
@@ -434,13 +440,12 @@ if hasattr(world_cls, "options_dataclass") and world_cls.options_dataclass is no
 # the canonical location names used by priority_locations / exclude_locations /
 # start_location_hints. This is the *static* list: options-dependent checks are not
 # reflected here, so consumers must treat it as a suggestion hint, not a source of truth.
-try:
-    _loc_map = getattr(world_cls, "location_name_to_id", None) or {}
-    locations = sorted(str(name) for name in _loc_map.keys())
-except Exception:
-    locations = []
+locations = static_locations(world_cls)
+# Story 9.58: the item names and groups, for the options that take items.
+items = static_items(world_cls)
+groups = item_groups(world_cls)
 
 # Story 44.3: the files this world declares (a ROM...), so the launcher can be asked for one.
 required_files = declared_required_files(world_cls)
 
-print(json.dumps({"options": result, "locations": locations, "requiredFiles": required_files}))
+print(json.dumps({"options": result, "locations": locations, "items": items, "itemGroups": groups, "requiredFiles": required_files}))
