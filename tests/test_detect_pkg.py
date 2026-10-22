@@ -1,10 +1,12 @@
-"""Where an apworld's package sits inside its archive, and where that puts it on the import path.
+r"""Where an apworld's package sits inside its archive, and where that puts it on the import path.
 
 The detection used to accept an `__init__.py` at exactly one level down, and to assume the archive
-root was the directory to add to `worlds.__path__`. Three worlds - fez, dungeon_clawler, nrftw -
-nest their package one level deeper. Detection fell through to "first entry's root": the *name* came
-out right, the path did not, and `import worlds.fez` failed with ModuleNotFoundError against a
-package that was sitting right there in the temp directory.
+root was the directory to add to `worlds.__path__`. It now finds a package nested deeper, with the
+directory that holds it, and reads `\` in entry names as a separator.
+
+fez, dungeon_clawler and nrftw were once blamed on a nested layout. They are flat archives zipped on
+Windows (`fez\__init__.py`); what failed was the extraction, see test_apworld_extraction.py
+(story 38.19).
 
 `_detect_pkg` is defined in a script that does its work at import time (argv, the Archipelago
 source tree), so these tests execute the function's source in isolation rather than importing it.
@@ -45,7 +47,7 @@ def test_flat_layout_is_unchanged():
 
 
 def test_nested_layout_reports_its_parent():
-    # The three failures. The name was never the problem - the parent was.
+    # A package one level below the archive root: the parent must be reported.
     assert detect_pkg(["fez/fez/__init__.py", "fez/fez/Options.py"]) == ("fez", "fez")
 
 
@@ -84,9 +86,7 @@ def test_both_path_separators_are_handled(sep: str):
 
 # ── The same function, in both scripts that carry it ─────────────────────────
 #
-# reachable.py has its own copy. It kept the old two-segment rule, so fez, dungeon_clawler and
-# nrftw were unreachable as well as un-introspected - the same three worlds, the same cause, a
-# second place to fix.
+# reachable.py has its own copy; both must read archive layouts the same way.
 
 @pytest.mark.parametrize("script", SCRIPTS)
 def test_every_copy_handles_a_nested_layout(script: str):

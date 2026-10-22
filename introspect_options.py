@@ -202,13 +202,15 @@ def _detect_pkg(entries: list[str]) -> tuple[str, str] | None:
     Returns `(package name, path of its parent relative to the archive root)`.
 
     The parent used to be assumed to be the archive root, and only an `__init__.py` sitting exactly
-    one level down counted. Three worlds - fez, dungeon_clawler, nrftw - nest their package one
-    level deeper, so detection fell through to "first entry's root": the *name* came out right, the
-    directory added to `worlds.__path__` did not, and importing `worlds.<name>` failed with
-    ModuleNotFoundError against a package that was sitting right there.
+    one level down counted. A package nested deeper (`worlds/<name>/__init__.py`) is now found too,
+    with the directory that holds it.
 
     The shallowest `__init__.py` wins, so a world that also ships sub-packages still resolves to its
     own root rather than to one of them.
+
+    Entry names are read with `\\` as a separator: archives zipped on Windows carry them. fez,
+    dungeon_clawler and nrftw were once blamed on a nested layout; they are flat, Windows-zipped
+    archives, and what failed was the extraction (see `_extract_apworld`, story 38.19).
     """
     best: tuple[int, list[str], str] | None = None
     for entry in entries:
@@ -245,6 +247,24 @@ def _print_layout(apworld: str, entries: list[str], pkg: str, parent: str, pkg_r
     print(f"  archive entries ({len(entries)}): {entries[:12]}", file=sys.stderr)
 
 
+def _extract_apworld(apworld: str, dest: str) -> None:
+    """Extract an apworld, reading `\\` in its entry names as a directory separator.
+
+    An archive zipped on Windows names its entries `fez\\__init__.py`. On Linux `extractall` only
+    converts `os.sep`, so it wrote flat files literally named `fez\\__init__.py` at the root of the
+    temp directory, no `fez/` package, and `import worlds.fez` failed (fez, dungeon_clawler and
+    nrftw, story 38.19). The generation, template and reachability scripts already normalized each
+    member; this one used `extractall` and did not.
+
+    `ZipFile.extract` still sanitizes the normalized name (no absolute path, no `..`), so an entry
+    cannot land outside `dest`.
+    """
+    with zipfile.ZipFile(apworld) as zf:
+        for member in zf.infolist():
+            member.filename = member.filename.replace("\\", "/")
+            zf.extract(member, dest)
+
+
 _loaded_pkg_names: list[str] = []
 
 for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
@@ -278,8 +298,7 @@ for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
 
     _tmp_dir = tempfile.mkdtemp(prefix="apworld_")
     atexit.register(shutil.rmtree, _tmp_dir, True)
-    with zipfile.ZipFile(str(_apw)) as _zf:
-        _zf.extractall(_tmp_dir)
+    _extract_apworld(str(_apw), _tmp_dir)
 
     # What goes on the import path is the directory *containing* the package, which is the archive
     # root only when the package sits directly under it.
