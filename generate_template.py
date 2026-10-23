@@ -157,7 +157,7 @@ _worlds_stub.World = World
 # Archipelago reserves "random" as a keyword; some apworlds use it anyway.
 # On AssertionError we strip option_random* and retry so the world still loads. Shared with every
 # script that loads apworlds (generation_setup.py, story 9.55).
-from generation_setup import install_permissive_choice_meta  # noqa: E402
+from generation_setup import apworld_sources, install_permissive_choice_meta  # noqa: E402
 install_permissive_choice_meta()
 
 # Expose worlds/__init__.py public symbols that apworlds import directly.
@@ -171,6 +171,7 @@ except OSError:
     _user_folder = None
 _worlds_stub.user_folder = _user_folder
 _worlds_stub.failed_world_loads = {}  # dict since AP 0.6.8 (game name -> reason); Generate calls .keys()
+_worlds_stub.world_sources = []  # filled with the apworlds to load, before any is imported (story 38.21)
 
 # ─── World imports: honest first, stub only what is truly missing ────────────
 # See apworld_import.py: nothing is stubbed up front, so a world that ships its own
@@ -245,6 +246,7 @@ _loaded_pkg_names: list[str] = []
 # worlds.<pkg_name>. This makes importlib.resources.files("worlds.<pkg_name>")
 # work correctly for apworlds that call it at module level.
 if args.world_directory:
+    _worlds_stub.world_sources.extend(apworld_sources(args.world_directory))
     for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
         try:
             with zipfile.ZipFile(str(_apw)) as zf:

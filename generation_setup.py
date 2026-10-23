@@ -404,3 +404,44 @@ def _declared_path(group_name, key, world_types):
                 if key in vars(klass):
                     return vars(klass)[key]
     return None
+
+
+# ─── worlds.world_sources ─────────────────────────────────────────────────────
+# Archipelago's worlds/__init__.py lists every world it found in `world_sources`, and some apworlds
+# read it to detect an optional companion: pokemon_bw looks for pokemon_bw_dexsanitysanity with
+# `from worlds import world_sources` at import time. Our scripts replace `worlds` with a stub that
+# never runs that file, so the attribute must be furnished here or the import fails and the world
+# never registers (story 38.21).
+class WorldSource:
+    """The fields of Archipelago's `worlds.WorldSource` (0.6.8) that a world can read."""
+
+    def __init__(self, path, is_zip=False, relative=False):
+        self.path = path
+        self.is_zip = is_zip
+        self.relative = relative
+
+    @property
+    def name(self):
+        return os.path.splitext(os.path.basename(self.path))[0]
+
+    @property
+    def resolved_path(self):
+        return self.path
+
+    def __repr__(self):
+        return f"WorldSource({self.path}, is_zip={self.is_zip}, relative={self.relative})"
+
+
+def apworld_sources(directory):
+    """One source per .apworld of `directory`, as Archipelago indexes them before loading any.
+
+    Listed up front, not as each one loads: pokemon_bw sorts before pokemon_bw_dexsanitysanity, so a
+    list grown during the loop would not yet hold the companion when pokemon_bw looks for it.
+    """
+    if not directory or not os.path.isdir(directory):
+        return []
+    return [
+        WorldSource(os.path.join(directory, name), is_zip=True)
+        for name in sorted(os.listdir(directory))
+        if name.endswith(".apworld")
+    ]

@@ -139,6 +139,7 @@ _worlds_stub.World = World
 _worlds_stub.local_folder = f"{ARCH_SRC}/worlds"
 _worlds_stub.user_folder = None
 _worlds_stub.failed_world_loads = {}  # dict since AP 0.6.8 (game name -> reason); Generate calls .keys()
+_worlds_stub.world_sources = []  # filled with the apworlds to load, before any is imported (story 38.21)
 _worlds_stub.network_data_package = {"games": {}}
 
 
@@ -175,6 +176,7 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 # preparation every script that loads apworlds or generates shares - see generation_setup.py.
 from generation_setup import (  # noqa: E402
     apply_host_gates,
+    apworld_sources,
     apply_required_files,
     declared_required_files,
     disable_file_dialogs,
@@ -230,6 +232,7 @@ if __name__ == "__main__":
     def _load_apworlds_from(apworld_dir: pathlib.Path) -> None:
         if not apworld_dir.is_dir():
             return
+        _worlds_pkg.world_sources.extend(apworld_sources(str(apworld_dir)))
         for _apw in sorted(apworld_dir.glob("*.apworld")):
             try:
                 with zipfile.ZipFile(str(_apw)) as _zf:

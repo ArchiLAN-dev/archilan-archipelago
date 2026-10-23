@@ -139,6 +139,7 @@ except OSError:
     _user_folder = None
 _worlds_stub.user_folder = _user_folder
 _worlds_stub.failed_world_loads = {}  # dict since AP 0.6.8 (game name -> reason); Generate calls .keys()
+_worlds_stub.world_sources = []  # filled with the apworlds to load, before any is imported (story 38.21)
 
 
 def _worlds_getattr(name):
@@ -176,7 +177,7 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 #
 # Shared with every script that loads apworlds (generation_setup.py, story 9.55): a world whose
 # template generates has to be loadable here too.
-from generation_setup import declared_required_files, install_permissive_choice_meta  # noqa: E402
+from generation_setup import apworld_sources, declared_required_files, install_permissive_choice_meta  # noqa: E402
 install_permissive_choice_meta()
 
 # ─── World imports: honest first, stub only what is truly missing ────────────
@@ -267,6 +268,7 @@ def _extract_apworld(apworld: str, dest: str) -> None:
 
 _loaded_pkg_names: list[str] = []
 
+_worlds_stub.world_sources.extend(apworld_sources(args.world_directory))
 for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
     try:
         with zipfile.ZipFile(str(_apw)) as zf:
