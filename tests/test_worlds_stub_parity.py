@@ -111,3 +111,12 @@ def test_failed_world_loads_is_a_dict_like_archipelago_0_6_8(script: str) -> Non
     `AttributeError: 'list' object has no attribute 'keys'` instead of the "no world found" message.
     """
     assert isinstance(_stub_value(script, "failed_world_loads"), ast.Dict)
+
+
+@pytest.mark.parametrize("script", SCRIPTS)
+def test_world_sources_is_a_list_like_archipelago(script: str) -> None:
+    """pokemon_bw does `from worlds import world_sources` and iterates it (story 38.21).
+
+    Missing, the import raised ImportError and the world never registered: "No game registered".
+    """
+    assert isinstance(_stub_value(script, "world_sources"), ast.List)
