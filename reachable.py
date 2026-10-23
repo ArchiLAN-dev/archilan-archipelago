@@ -203,8 +203,9 @@ def _detect_pkg(entries: list[str]) -> tuple[str, str] | None:
     Returns `(package name, path of its parent relative to the archive root)`.
 
     Kept identical to introspect_options.py. Only an `__init__.py` exactly one level down used to
-    count, and the archive root was assumed to be the directory to expose; fez, dungeon_clawler and
-    nrftw nest their package one level deeper, so the name came out right and the path did not.
+    count, and the archive root was assumed to be the directory to expose; a package nested deeper
+    is now found with the directory that holds it. Entry names are read with `\\` as a separator
+    (archives zipped on Windows, story 38.19).
     """
     best: tuple[int, list[str], str] | None = None
     for entry in entries:
