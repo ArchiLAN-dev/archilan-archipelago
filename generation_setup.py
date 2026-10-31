@@ -229,6 +229,33 @@ def warning_line(record):
     return f"{WARNING_SENTINEL} {json.dumps(record, ensure_ascii=False)}"
 
 
+def allow_as_dict_of_every_option(common_options_cls=None):
+    """`options.as_dict()` of every option works, as in an optimized build (story 38.25). Idempotent.
+
+    `CommonOptions.as_dict` asserts `len(option_names) < len(type_hints)`, "Specify only options you need": advice
+    to authors, gone in the Windows Launcher (`__debug__` false), where Caves of Qud generates with all its options
+    in slot data. Such a call is split into smaller ones, merged in the order asked; any other call is untouched.
+    """
+    if common_options_cls is None:
+        from Options import CommonOptions as common_options_cls
+
+    original = common_options_cls.as_dict
+    if getattr(original, "_archilan_every_option", False):
+        return
+
+    def _as_dict(self, *option_names, **kwargs):
+        size = len(type(self).type_hints) - 1
+        if size < 1 or len(option_names) <= size:
+            return original(self, *option_names, **kwargs)
+        result = {}
+        for start in range(0, len(option_names), size):
+            result.update(original(self, *option_names[start:start + size], **kwargs))
+        return result
+
+    _as_dict._archilan_every_option = True
+    common_options_cls.as_dict = _as_dict
+
+
 def release_events_on_output_failure(autoworld_module=None):
     """A world whose output failed releases its `threading.Event`s, then the failure goes on (story 38.24). Idempotent.
 
