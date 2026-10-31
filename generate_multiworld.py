@@ -175,6 +175,7 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 # Permissive Choice metaclass (rune4, smash64, untitled_goose_game) and host permission gates: the
 # preparation every script that loads apworlds or generates shares - see generation_setup.py.
 from generation_setup import (  # noqa: E402
+    allow_as_dict_of_every_option,
     apply_host_gates,
     apworld_sources,
     apply_required_files,
@@ -413,6 +414,9 @@ if __name__ == "__main__":
     # Story 38.12: an unmet accessibility check warns, as in the official Launcher, instead of failing a
     # game that stays beatable. Each warning is reported to the orchestrator once the game is generated.
     _warnings = soften_accessibility_check()
+
+    # Story 38.25: as_dict() of every option, as the Launcher allows (Caves of Qud's slot data).
+    allow_as_dict_of_every_option()
 
     # Story 38.24: a failed output releases the events its world's other stages wait on, so it fails fast.
     release_events_on_output_failure(_autoworld)
