@@ -273,7 +273,8 @@ def _load_apworlds_from(apworld_dir: pathlib.Path) -> None:
                     os.rename(raw_dir, os.path.join(pkg_root, pkg))
             # Bundled top-level deps sit at the zip root, so expose it on sys.path too.
             sys.path.insert(0, tmp_dir)
-            _worlds_pkg.__path__.append(pkg_root)
+            # Ahead of the release's own worlds folder, as at generation (story 38.29).
+            _worlds_pkg.__path__.insert(0, pkg_root)
             import_world(
                 mod,
                 on_stub=lambda name, a=apw.name: print(
