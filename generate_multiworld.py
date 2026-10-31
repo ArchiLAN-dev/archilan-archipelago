@@ -234,7 +234,7 @@ if __name__ == "__main__":
                 del sys.modules[key]
             return
 
-    def _load_apworlds_from(apworld_dir: pathlib.Path) -> None:
+    def _load_apworlds_from(apworld_dir: pathlib.Path, custom_names: set[str]) -> None:
         if not apworld_dir.is_dir():
             return
         _worlds_pkg.world_sources.extend(apworld_sources(str(apworld_dir)))
@@ -280,9 +280,15 @@ if __name__ == "__main__":
             _install_apworld_requirements(_tmp_dir, _pkg)
             # Expose bundled top-level packages (deps at zip root) to the import system.
             sys.path.insert(0, _tmp_dir)
-            # Ahead of the release's own worlds folder: an apworld named like a built-in world (oot) must
-            # replace it, as the template and introspection scripts already do (story 38.29).
-            _worlds_pkg.__path__.insert(0, _tmp_dir)
+            # A custom apworld goes ahead of the release's own worlds folder: one named like a built-in
+            # world (oot) must replace it, as the template and introspection scripts already do (story
+            # 38.29). An official one stays behind: it ships bytecode for the release's Python, which
+            # this interpreter refuses ("bad magic number"), and the folder holds the same world as
+            # source.
+            if _apw.name in custom_names:
+                _worlds_pkg.__path__.insert(0, _tmp_dir)
+            else:
+                _worlds_pkg.__path__.append(_tmp_dir)
             try:
                 import_world(
                     _mod,
@@ -319,15 +325,17 @@ if __name__ == "__main__":
     for _apw in sorted(OFFICIAL_APWORLDS.glob("*.apworld")):
         shutil.copy2(_apw, _combined / _apw.name)
 
+    _custom_names: set[str] = set()
     for _src in [APWORLDS_IN, _custom_dir]:
         if _src and _src.is_dir():
             for _apw in sorted(_src.glob("*.apworld")):
                 shutil.copy2(_apw, _combined / _apw.name)
+                _custom_names.add(_apw.name)
 
     print(f"DEBUG combined apworlds: {sorted(p.name for p in _combined.glob('*.apworld'))}",
           file=sys.stderr)
 
-    _load_apworlds_from(_combined)
+    _load_apworlds_from(_combined, _custom_names)
 
     # Rebuild network_data_package with only successfully loaded worlds.
     # Per-world try-except guards against worlds that loaded with C-extension stubs
