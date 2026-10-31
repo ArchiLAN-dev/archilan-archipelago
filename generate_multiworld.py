@@ -181,6 +181,7 @@ from generation_setup import (  # noqa: E402
     declared_required_files,
     disable_file_dialogs,
     install_permissive_choice_meta,
+    release_events_on_output_failure,
     required_file_record,
     soften_accessibility_check,
     take_required_file_args,
@@ -412,6 +413,9 @@ if __name__ == "__main__":
     # Story 38.12: an unmet accessibility check warns, as in the official Launcher, instead of failing a
     # game that stays beatable. Each warning is reported to the orchestrator once the game is generated.
     _warnings = soften_accessibility_check()
+
+    # Story 38.24: a failed output releases the events its world's other stages wait on, so it fails fast.
+    release_events_on_output_failure(_autoworld)
 
     try:
         erargs, seed = Generate.main()

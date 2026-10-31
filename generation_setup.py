@@ -229,6 +229,37 @@ def warning_line(record):
     return f"{WARNING_SENTINEL} {json.dumps(record, ensure_ascii=False)}"
 
 
+def release_events_on_output_failure(autoworld_module=None):
+    """A world whose output failed releases its `threading.Event`s, then the failure goes on (story 38.24). Idempotent.
+
+    Ocarina of Time opens its ROM in `generate_output` before the `try/finally` that sets
+    `collectible_flags_available`, and `fill_slot_data` waits on it with no timeout. A world built on it that skips
+    the upfront ROM check (Master Quest Water Temple) then hung until the orchestrator's 5 minute deadline instead
+    of failing on the missing file. Released, the waiters move on and `Main.main` surfaces the original error.
+    """
+    if autoworld_module is None:
+        from worlds import AutoWorld as autoworld_module
+
+    original = autoworld_module.call_single
+    if getattr(original, "_archilan_releases_events", False):
+        return
+
+    import threading
+
+    def _call_single(multiworld, method_name, player, *args):
+        try:
+            return original(multiworld, method_name, player, *args)
+        except Exception:
+            if method_name == "generate_output":
+                for value in list(vars(multiworld.worlds[player]).values()):
+                    if isinstance(value, threading.Event):
+                        value.set()
+            raise
+
+    _call_single._archilan_releases_events = True
+    autoworld_module.call_single = _call_single
+
+
 def disable_file_dialogs(settings_module=None):
     """No file dialog during a generation (story 44.1).
 
