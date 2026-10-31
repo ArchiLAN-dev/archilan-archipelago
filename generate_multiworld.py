@@ -280,7 +280,9 @@ if __name__ == "__main__":
             _install_apworld_requirements(_tmp_dir, _pkg)
             # Expose bundled top-level packages (deps at zip root) to the import system.
             sys.path.insert(0, _tmp_dir)
-            _worlds_pkg.__path__.append(_tmp_dir)
+            # Ahead of the release's own worlds folder: an apworld named like a built-in world (oot) must
+            # replace it, as the template and introspection scripts already do (story 38.29).
+            _worlds_pkg.__path__.insert(0, _tmp_dir)
             try:
                 import_world(
                     _mod,
