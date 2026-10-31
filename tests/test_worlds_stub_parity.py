@@ -78,10 +78,11 @@ def test_no_script_furnishes_the_stub_differently() -> None:
     shared = set.intersection(*attributes.values())
     everything = set.union(*attributes.values())
 
-    # Legitimately one-sided, and listed rather than tolerated in silence: `__file__` is set only
-    # where a world resolves paths against it, and `network_data_package` only matters when a seed
-    # is actually produced.
-    allowed = {"__file__", "network_data_package"}
+    # Legitimately one-sided, and listed rather than tolerated in silence: `network_data_package` only
+    # matters when a seed is actually produced. `__file__` used to be listed too, "set only where a world
+    # resolves paths against it" - but generation loads the same worlds, and yugiohgx's update was
+    # rejected for it (story 38.27).
+    allowed = {"network_data_package"}
 
     assert (everything - shared) <= allowed, (
         "these scripts furnish the `worlds` stub differently: "

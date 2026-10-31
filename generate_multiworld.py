@@ -108,6 +108,9 @@ sys.path.insert(0, ARCH_SRC)
 _worlds_stub = types.ModuleType("worlds")
 _worlds_stub.__path__ = [f"{ARCH_SRC}/worlds"]
 _worlds_stub.__package__ = "worlds"
+# Point at the real worlds/__init__.py, as the other two scripts do: yugiohgx looks for _bizhawk.apworld next to
+# `worlds.__file__` at import time, and without it failed to load here only (story 38.27).
+_worlds_stub.__file__ = f"{ARCH_SRC}/worlds/__init__.py"
 sys.modules["worlds"] = _worlds_stub
 
 # ─── World imports: honest first, stub only what is truly missing ────────────
