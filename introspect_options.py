@@ -31,6 +31,12 @@ import traceback
 import types
 import zipfile
 
+# Story 38.31: stdout carries the JSON and nothing else. An apworld that prints at import ("C compression module
+# not found") would otherwise sit in front of it, and the orchestrator, which stores stdout as-is, could no longer
+# read the locations. Everything printed until the end goes to stderr; only the final JSON reaches the real stdout.
+_JSON_OUT = sys.stdout
+sys.stdout = sys.stderr
+
 # Kivy: suppress its argument parser and env-var hooks.
 os.environ.setdefault("KIVY_NO_ARGS", "1")
 os.environ.setdefault("KIVY_NO_ENV_CONFIG", "1")
@@ -469,4 +475,4 @@ groups = item_groups(world_cls)
 # Story 44.3: the files this world declares (a ROM...), so the launcher can be asked for one.
 required_files = declared_required_files(world_cls)
 
-print(json.dumps({"options": result, "locations": locations, "items": items, "itemGroups": groups, "requiredFiles": required_files}))
+print(json.dumps({"options": result, "locations": locations, "items": items, "itemGroups": groups, "requiredFiles": required_files}), file=_JSON_OUT)
