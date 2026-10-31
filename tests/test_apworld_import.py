@@ -192,7 +192,7 @@ _HARNESS = textwrap.dedent(
     sys.modules["worlds.Files"] = files
     sys.modules["worlds.AutoWorld"] = auto_world
 
-    from apworld_import import import_world
+    from apworld_import import finder, import_world
 
     error = None
     try:
@@ -202,6 +202,7 @@ _HARNESS = textwrap.dedent(
 
     print(json.dumps({
         "error": error,
+        "stubbed": sorted(finder.stubbed),
         "file_endings": sorted(files.AutoPatchRegister.file_endings),
         "patch_types": sorted(files.AutoPatchRegister.patch_types),
         "mixin_attrs": sorted(n for n in vars(base_classes.CollectionState) if "flaky" in n),
@@ -222,6 +223,7 @@ def _run(
     world_body: str,
     extra_modules: dict | None = None,
     manifest: dict | None = None,
+    package_files: dict | None = None,
 ) -> dict:
     """Import `world_module` through import_world in a subprocess, return the registry state."""
     package_dir = tmp_path / world_module.split(".")[-1]
@@ -229,6 +231,10 @@ def _run(
     (package_dir / "__init__.py").write_text(world_body, encoding="utf-8")
     if manifest is not None:
         (package_dir / "archipelago.json").write_text(json.dumps(manifest), encoding="utf-8")
+    for relative, body in (package_files or {}).items():
+        target = package_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
     for name, body in (extra_modules or {}).items():
         (tmp_path / f"{name}.py").write_text(body, encoding="utf-8")
 
@@ -330,3 +336,42 @@ def test_a_world_without_a_manifest_needs_no_registry(tmp_path):
 
     assert state["error"] is None
     assert state["world_versions"] == {}
+
+
+# Super Junkoid: the world ships its library inside its own folder and imports it as a top-level package.
+# Archipelago extracts it to lib/ when the world loads from its zip; extracted by us, it must not get stubbed.
+_BUNDLED_LIBRARY_WORLD = textwrap.dedent(
+    """
+    from bundled_randomizer.game import make_game
+
+    assert make_game() == "real game", "the bundled library was stubbed"
+    """
+)
+
+
+def test_a_library_the_world_ships_is_imported_not_stubbed(tmp_path):
+    state = _run(
+        tmp_path,
+        "worlds.bundled_world",
+        _BUNDLED_LIBRARY_WORLD,
+        package_files={
+            "bundled_randomizer/__init__.py": "",
+            "bundled_randomizer/game.py": "def make_game():\n    return 'real game'\n",
+        },
+    )
+
+    assert state["error"] is None
+    assert state["stubbed"] == []
+
+
+def test_only_the_shipped_package_becomes_top_level(tmp_path):
+    """A plain module of the world folder stays private: missing elsewhere, it is still stubbed."""
+    state = _run(
+        tmp_path,
+        "worlds.private_world",
+        "import helper\nimport absent_client_library\n",
+        package_files={"helper.py": "VALUE = 1\n"},
+    )
+
+    assert state["error"] is None
+    assert state["stubbed"] == ["absent_client_library", "helper"]

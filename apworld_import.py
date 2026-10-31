@@ -165,6 +165,42 @@ finder = OnDemandStubFinder()
 sys.meta_path.insert(0, finder)
 
 
+class BundledLibraryFinder(importlib.abc.MetaPathFinder):
+    """Top-level names a world ships as a sub-package of its own folder (story 38.26).
+
+    Super Junkoid ships `superjunkoid/super_junkoid_randomizer/` and imports `super_junkoid_randomizer`. Loaded
+    from its zip, the world extracts that folder into Archipelago's `lib/`, on sys.path; extracted by us, its
+    `__file__` no longer names an .apworld, that set-up never runs and the library got stubbed. Only the names
+    registered here resolve: the world's other modules never become top-level ones.
+    """
+
+    def __init__(self):
+        self.libraries = {}
+
+    def find_spec(self, fullname, path, target=None):
+        parent = self.libraries.get(fullname)
+        if parent is None:
+            return None
+        return importlib.machinery.PathFinder.find_spec(fullname, [parent])
+
+
+bundled_libraries = BundledLibraryFinder()
+sys.meta_path.append(bundled_libraries)
+
+
+def _expose_bundled_library(module_name, missing):
+    """Register `missing` when the world being imported ships it as a sub-package; False when it does not."""
+    parts = module_name.split(".")
+    if len(parts) < 2 or parts[0] != "worlds" or missing in bundled_libraries.libraries:
+        return False
+    for folder in list(getattr(sys.modules.get("worlds"), "__path__", None) or []):
+        world_dir = os.path.join(folder, parts[1])
+        if os.path.isfile(os.path.join(world_dir, missing, "__init__.py")):
+            bundled_libraries.libraries[missing] = world_dir
+            return True
+    return False
+
+
 # Archipelago registers a world's classes as a side effect of *executing* its module: the
 # class body of a World, of a patch container or of a logic mixin writes itself into a
 # global registry the moment it runs. A failed attempt therefore leaves entries behind, and
@@ -263,6 +299,9 @@ def import_world(module_name, on_stub=None):
 
             if not missing or missing in ARCHIP_ROOTS:
                 raise
+            if missing not in finder.stubbed and _expose_bundled_library(module_name, missing):
+                # The world ships it: the real library, retried honestly, never a stub.
+                continue
             if missing in finder.stubbed:
                 if not honest:
                     # Already stubbed and still failing: stubbing cannot rescue this world.
