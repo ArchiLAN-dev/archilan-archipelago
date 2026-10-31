@@ -17,7 +17,12 @@ import pytest
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-SCRIPTS = ["generate_template.py", "generate_multiworld.py", "introspect_options.py", "reachable.py"]
+# The template and introspection scripts only ever load the tested apworld.
+CUSTOM_ONLY_SCRIPTS = ["generate_template.py", "introspect_options.py"]
+# The generation and reachability scripts also load the release's official apworlds, which must stay
+# behind its worlds folder: they ship bytecode for the release's Python, refused here ("bad magic
+# number"), so putting them first unregistered every official world - A Short Hike included.
+WITH_OFFICIAL_SCRIPTS = ["generate_multiworld.py", "reachable.py"]
 
 
 def _path_calls(script: str) -> list[str]:
@@ -35,12 +40,20 @@ def _path_calls(script: str) -> list[str]:
     return calls
 
 
-@pytest.mark.parametrize("script", SCRIPTS)
-def test_every_script_puts_an_apworld_ahead_of_the_built_in_worlds(script: str) -> None:
+@pytest.mark.parametrize("script", CUSTOM_ONLY_SCRIPTS)
+def test_the_tested_apworld_goes_ahead_of_the_built_in_worlds(script: str) -> None:
     calls = _path_calls(script)
 
     assert "insert" in calls
     assert "append" not in calls
+
+
+@pytest.mark.parametrize("script", WITH_OFFICIAL_SCRIPTS)
+def test_a_custom_apworld_goes_ahead_and_an_official_one_behind(script: str) -> None:
+    calls = _path_calls(script)
+
+    assert "insert" in calls
+    assert "append" in calls
 
 
 def test_a_package_inserted_first_shadows_the_built_in_one(tmp_path, monkeypatch) -> None:

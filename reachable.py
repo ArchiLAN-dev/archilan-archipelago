@@ -225,7 +225,7 @@ def _detect_pkg(entries: list[str]) -> tuple[str, str] | None:
     return None
 
 
-def _load_apworlds_from(apworld_dir: pathlib.Path) -> None:
+def _load_apworlds_from(apworld_dir: pathlib.Path, ahead: bool = True) -> None:
     if not apworld_dir.is_dir():
         return
     for apw in sorted(apworld_dir.glob("*.apworld")):
@@ -273,8 +273,12 @@ def _load_apworlds_from(apworld_dir: pathlib.Path) -> None:
                     os.rename(raw_dir, os.path.join(pkg_root, pkg))
             # Bundled top-level deps sit at the zip root, so expose it on sys.path too.
             sys.path.insert(0, tmp_dir)
-            # Ahead of the release's own worlds folder, as at generation (story 38.29).
-            _worlds_pkg.__path__.insert(0, pkg_root)
+            # A custom apworld goes ahead of the release's own worlds folder, an official one behind
+            # (its bytecode is for the release's Python), as at generation (story 38.29).
+            if ahead:
+                _worlds_pkg.__path__.insert(0, pkg_root)
+            else:
+                _worlds_pkg.__path__.append(pkg_root)
             import_world(
                 mod,
                 on_stub=lambda name, a=apw.name: print(
@@ -290,7 +294,7 @@ def _load_apworlds_from(apworld_dir: pathlib.Path) -> None:
 
 
 # Load official apworlds, then custom apworlds (dev + prod + session-specific).
-_load_apworlds_from(OFFICIAL_APWORLDS)
+_load_apworlds_from(OFFICIAL_APWORLDS, ahead=False)
 _load_apworlds_from(APWORLDS_DEV)
 _load_apworlds_from(APWORLDS_IN)
 _load_apworlds_from(APWORLDS_POOL)
