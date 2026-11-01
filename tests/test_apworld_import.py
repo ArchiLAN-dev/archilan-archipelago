@@ -224,6 +224,7 @@ def _run(
     extra_modules: dict | None = None,
     manifest: dict | None = None,
     package_files: dict | None = None,
+    root_manifest: dict | None = None,
 ) -> dict:
     """Import `world_module` through import_world in a subprocess, return the registry state."""
     package_dir = tmp_path / world_module.split(".")[-1]
@@ -231,6 +232,9 @@ def _run(
     (package_dir / "__init__.py").write_text(world_body, encoding="utf-8")
     if manifest is not None:
         (package_dir / "archipelago.json").write_text(json.dumps(manifest), encoding="utf-8")
+    if root_manifest is not None:
+        # The root of the extracted zip: the folder holding the package.
+        (tmp_path / "archipelago.json").write_text(json.dumps(root_manifest), encoding="utf-8")
     for relative, body in (package_files or {}).items():
         target = package_dir / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -328,6 +332,36 @@ def test_a_broken_manifest_leaves_the_world_loaded(tmp_path):
     assert state["world_types"] == ["Manifest Game"]
     # Applying it failed, so the default stands - the world itself is untouched.
     assert state["world_versions"]["Manifest Game"] == [0, 0, 0]
+
+
+def test_a_manifest_at_the_zip_root_names_the_world_version(tmp_path):
+    """Story 38.32: Dungeon Defenders ships archipelago.json at the root of its zip, not in its package.
+
+    The core reads it there first; missed, the world stayed at 0.0.0 and its own template, which requires
+    0.8.2, was refused at generation.
+    """
+    state = _run(
+        tmp_path,
+        "worlds.manifest_world",
+        _MANIFEST_WORLD,
+        root_manifest={"game": "Manifest Game", "world_version": "0.8.2"},
+    )
+
+    assert state["error"] is None
+    assert state["world_versions"]["Manifest Game"] == [0, 8, 2]
+
+
+def test_the_zip_root_manifest_wins_over_the_package_one(tmp_path):
+    """Same order as the core: the root of the zip first, then anywhere inside it."""
+    state = _run(
+        tmp_path,
+        "worlds.manifest_world",
+        _MANIFEST_WORLD,
+        manifest={"game": "Manifest Game", "world_version": "1.0.0"},
+        root_manifest={"game": "Manifest Game", "world_version": "2.0.0"},
+    )
+
+    assert state["world_versions"]["Manifest Game"] == [2, 0, 0]
 
 
 def test_a_world_without_a_manifest_needs_no_registry(tmp_path):
