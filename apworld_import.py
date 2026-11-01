@@ -351,10 +351,21 @@ def _apply_world_manifest(module):
 
 
 def _read_manifest(module):
-    """The world's archipelago.json, or an empty dict - same walk as the core's."""
+    """The world's archipelago.json, or an empty dict - same order as the core's.
+
+    The core reads an apworld's manifest at the root of its zip first (worlds/Files.py, manifest_path),
+    then anywhere inside it (story 38.32: Dungeon Defenders ships it at the root only). Extracted here,
+    that root is the folder holding the package. A world of the release's worlds/ folder has none there.
+    """
     roots = list(getattr(module, "__path__", []))
     if not roots and getattr(module, "__file__", None):
         roots = [os.path.dirname(module.__file__)]
+
+    for root in roots:
+        zip_root = os.path.join(os.path.dirname(os.path.normpath(root)), "archipelago.json")
+        if os.path.isfile(zip_root):
+            with open(zip_root, encoding="utf-8") as fh:
+                return json.load(fh)
 
     for root in roots:
         for dirpath, _dirs, files in os.walk(root):
