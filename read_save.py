@@ -9,7 +9,6 @@ import argparse
 import glob
 import json
 import os
-import pickle
 import sys
 import zlib
 
@@ -80,7 +79,11 @@ def main() -> None:
     with open(latest, "rb") as fh:
         raw = fh.read()
 
-    data: dict = pickle.loads(zlib.decompress(raw))  # noqa: S301
+    # The save can come from outside: an imported archive lands in the same directory, and plain
+    # pickle runs code while deserialising. This is the allowlist MultiServer reads saves with.
+    from Utils import restricted_loads  # noqa: PLC0415 - only importable inside the AP image
+
+    data: dict = restricted_loads(zlib.decompress(raw))
 
     location_checks = _save_slot_map(data.get("location_checks", {}))
     client_game_state = _save_slot_map(data.get("client_game_state", {}))
