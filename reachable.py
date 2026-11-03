@@ -26,7 +26,6 @@ import json
 import json as _json
 import logging
 import pathlib
-import pickle
 import re
 import shutil
 import sys
@@ -363,9 +362,16 @@ def _slot_map(mapping: dict) -> dict:
     return result
 
 
+def _restricted_loads(data: bytes) -> dict:
+    """Both files can come from an imported archive: never plain pickle, it runs code on load."""
+    from Utils import restricted_loads  # noqa: PLC0415 - only importable inside the AP image
+
+    return restricted_loads(data)
+
+
 def load_apsave(path: str) -> dict:
     with open(path, "rb") as f:
-        return pickle.loads(zlib.decompress(f.read()))
+        return _restricted_loads(zlib.decompress(f.read()))
 
 
 def load_archipelago(path: str) -> dict:
@@ -375,7 +381,7 @@ def load_archipelago(path: str) -> dict:
         with zipfile.ZipFile(__import__("io").BytesIO(data)) as zf:
             arch_name = next((n for n in zf.namelist() if n.endswith(".archipelago")), None)
             data = zf.read(arch_name if arch_name else zf.namelist()[0])
-    return pickle.loads(zlib.decompress(data[1:]))
+    return _restricted_loads(zlib.decompress(data[1:]))
 
 
 # ---------------------------------------------------------------------------
