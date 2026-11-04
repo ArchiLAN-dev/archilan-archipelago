@@ -83,6 +83,7 @@ COPY option_schema.py /usr/local/lib/python3.13/site-packages/option_schema.py
 COPY world_names.py /usr/local/lib/python3.13/site-packages/world_names.py
 COPY generation_setup.py /usr/local/lib/python3.13/site-packages/generation_setup.py
 COPY reachable.py /reachable/reachable.py
+COPY reachable_host.py /reachable/reachable_host.py
 COPY protocol_io.py /reachable/protocol_io.py
 COPY read_save.py /readsave/read_save.py
 COPY ap_server.sh /ap_server.sh
@@ -106,6 +107,7 @@ RUN for f in /usr/local/bin/generate_template.py \
              /usr/local/lib/python3.13/site-packages/option_schema.py \
              /usr/local/lib/python3.13/site-packages/generation_setup.py \
              /reachable/reachable.py \
+             /reachable/reachable_host.py \
              /reachable/protocol_io.py \
              /readsave/read_save.py \
              /ap_server.sh \
@@ -135,8 +137,15 @@ RUN python -c "import json; maps = json.load(open('/Archipelago/data/ranked_maps
 # world rather than the feature that needed it.
 RUN mkdir -p /app/ArchipelagoSrc/Players /app/ArchipelagoSrc/output
 
+# The session server drops to this user (ap_server.sh). Same uid as the bridge: they share the
+# session volume.
+RUN useradd -m -u 1000 ap
+
 ENV PATH="/app/Archipelago/Archipelago:${PATH}"
 
 WORKDIR /workspace
+
+# ArchipelagoServer writes its logs and settings next to where it runs.
+RUN chown ap:ap /workspace
 
 CMD ["/entrypoint.sh"]

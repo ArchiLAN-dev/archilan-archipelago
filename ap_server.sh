@@ -1,5 +1,14 @@
 #!/bin/sh
 set -e
+
+# The server and the reachability daemon run the code of member worlds: root stops here. The volume
+# was filled by root (copy-to-container, generation) and the bridge shares it under the same uid.
+if [ "$(id -u)" = 0 ]; then
+    chown -R ap:ap /data
+    exec setpriv --reuid=ap --regid=ap --clear-groups --inh-caps=-all \
+        env HOME=/home/ap "$0" "$@"
+fi
+
 GAME_DIR="${ARCHIPELAGO_OUTPUT_DIR:-/data/output}"
 GAME_FILE=$(ls "$GAME_DIR"/*.zip "$GAME_DIR"/*.archipelago 2>/dev/null | head -1)
 if [ -z "$GAME_FILE" ]; then
@@ -30,5 +39,8 @@ set -- "$GAME_FILE" \
 case "${DISABLE_ITEM_CHEAT:-}" in
     1 | true | yes | on) set -- "$@" --disable_item_cheat ;;
 esac
+
+# Only the bridge of this session reaches it, through the volume: see reachable_host.py.
+python /reachable/reachable_host.py &
 
 exec ArchipelagoServer "$@"
