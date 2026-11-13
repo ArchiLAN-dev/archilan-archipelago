@@ -632,18 +632,42 @@ def _replay_slot_data(stage: str, world, slot_data: dict) -> None:
 # Fake AP generation (fallback: one player, fresh seed)
 # ---------------------------------------------------------------------------
 
+_NO_WORLD_MARKER = "No world found to handle game"
+_YAML_NAME_LINE = re.compile(r"^name:\s*(?P<q>['\"]?)(?P<name>.+?)(?P=q)\s*(?:#.*)?$", re.MULTILINE)
+
+
+def _slot_yaml(yamls_dir: str, player_name: str) -> Path | None:
+    """The YAML holding this player: `{name}.yaml`, else the file whose top-level `name:` is the player's."""
+    folder = Path(yamls_dir)
+    direct = folder / f"{player_name}.yaml"
+    if direct.is_file():
+        return direct
+    for candidate in sorted([*folder.glob("*.yaml"), *folder.glob("*.yml")]):
+        try:
+            text = candidate.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if any(match.group("name") == player_name for match in _YAML_NAME_LINE.finditer(text)):
+            return candidate
+    return None
+
+
 def build_multiworld(game: str, player_name: str, yaml_path: str, slot_data: dict) -> tuple[MultiWorld, int]:
     """Regenerate a minimal MultiWorld (rules only, no item placement)."""
     from Generate import main as GMain, mystery_argparse
 
     sys.argv = [sys.argv[0]]
     args = mystery_argparse()
-    args.player_files_path = str(Path(yaml_path).parent)
     args.skip_output = True
     args.multi = 0
     args.log_level = "error"
 
-    g_args, seed = GMain(args)
+    # Story 17.36: Generate reads every YAML of its folder, and one it cannot read (a world missing from
+    # this container) failed the fallback of every slot. Only this slot's file is rolled.
+    with tempfile.TemporaryDirectory(prefix="reachable-yaml-") as alone:
+        shutil.copy(yaml_path, alone)
+        args.player_files_path = alone
+        g_args, seed = GMain(args)
 
     # Find our slot in the generated args
     player_id = next((p for p, n in g_args.name.items() if n == player_name), 1)
@@ -992,19 +1016,25 @@ class _SessionTrackers:
             return _SlotTracker(self.arch, slot, self._exact, slot, exact=True)
 
         game: str = net_slot.game
-        yaml_candidates = list(Path(self.yamls_dir).glob(f"{net_slot.name}.yaml"))
-        if not yaml_candidates:
-            yaml_candidates = list(Path(self.yamls_dir).glob("*.yaml"))
-        if not yaml_candidates:
-            raise ValueError(f"no yaml found in {self.yamls_dir}")
+        # Story 17.36: the slot's own YAML, never another player's (the first file of the folder
+        # used to stand in when the file name did not match the slot name).
+        yaml_path = _slot_yaml(self.yamls_dir, net_slot.name)
+        if yaml_path is None:
+            raise ValueError(f"no yaml found for slot {slot} ({net_slot.name}) in {self.yamls_dir}")
         try:
-            mw, player_id = build_multiworld(game, net_slot.name, str(yaml_candidates[0]), self.arch.get("slot_data", {}).get(slot, {}))
+            mw, player_id = build_multiworld(game, net_slot.name, str(yaml_path), self.arch.get("slot_data", {}).get(slot, {}))
         except Exception as exc:
             # Story 44.4: a world that reads the player's file (a ROM) while building its logic cannot be
             # tracked without it, and ArchiLAN never keeps it. Said in words, with the file named.
             required = required_file_record(exc, AutoWorld.AutoWorldRegister.world_types)
             if required is not None:
                 raise RequiredFileUnavailable(required) from exc
+            # Story 17.36: generation had this world, the session's container does not.
+            if _NO_WORLD_MARKER in str(exc):
+                raise ValueError(
+                    f"Le suivi de ce jeu n'est pas disponible : le monde « {game} » n'est pas installé "
+                    "sur le serveur de la partie."
+                ) from exc
             # A single world that fails to fake-generate (e.g. a buggy apworld whose generate_early
             # raises) must not take down the whole daemon: the bridge gets a structured error for
             # this slot and the other slots keep working.
