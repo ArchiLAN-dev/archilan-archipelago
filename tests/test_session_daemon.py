@@ -20,13 +20,18 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import re
+
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import generation_setup  # noqa: E402
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_WANTED = {"_SessionTrackers", "_serve", "RequiredFileUnavailable", "_error_payload"}
+_WANTED = {
+    "_SessionTrackers", "_serve", "RequiredFileUnavailable", "_error_payload",
+    "_slot_yaml", "_NO_WORLD_MARKER", "_YAML_NAME_LINE", "build_multiworld",
+}
 
 
 class _Tracker:
@@ -40,8 +45,13 @@ class _Tracker:
 def _load(exact: object | None, emitted: list, built: list, diverging: dict | None = None) -> dict:
     with open(os.path.join(_REPO_ROOT, "reachable.py"), encoding="utf-8") as handle:
         tree = ast.parse(handle.read())
-    body = [node for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name in _WANTED]
+    body = [
+        node for node in tree.body
+        if (isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name in _WANTED and node.name != "build_multiworld")
+        or (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in _WANTED for t in node.targets))
+    ]
     loads: list[str] = []
+    yaml_files: list[str] = []
 
     def load_exact(arch_path: str, yamls_dir: str, arch: dict) -> tuple[object, dict] | None:
         loads.append(arch_path)
@@ -49,13 +59,16 @@ def _load(exact: object | None, emitted: list, built: list, diverging: dict | No
 
     def build_multiworld(game: str, name: str, yaml_path: str, slot_data: dict) -> tuple[object, int]:
         built.append(name)
+        yaml_files.append(Path(yaml_path).name)
         if name == "broken":
             raise RuntimeError("generate_early raised")
         if name == "rom":
             raise FileNotFoundError("lttp.sfc does not exist, but ALTTPSettings.rom_file is required")
+        if name == "phil":
+            raise RuntimeError("Encountered 1 error(s) in player files.\nException: No world found to handle game Pokemon Red.")
         return object(), 1
 
-    arch = {"slot_info": {1: SimpleNamespace(game="A", name="alice"), 2: SimpleNamespace(game="B", name="broken"), 3: SimpleNamespace(game="A Link to the Past", name="rom")}}
+    arch = {"slot_info": {1: SimpleNamespace(game="A", name="alice"), 2: SimpleNamespace(game="B", name="broken"), 3: SimpleNamespace(game="A Link to the Past", name="rom"), 4: SimpleNamespace(game="Pokemon Red", name="phil"), 5: SimpleNamespace(game="Terraria", name="3nvieux")}}
     namespace: dict = {
         "MultiWorld": object,
         "_SlotTracker": _Tracker,
@@ -63,10 +76,12 @@ def _load(exact: object | None, emitted: list, built: list, diverging: dict | No
         "_load_exact_multiworld": load_exact,
         "build_multiworld": build_multiworld,
         "Path": Path,
+        "re": re,
         "_emit": emitted.append,
         "json": json,
         "sys": sys,
         "loads": loads,
+        "yaml_files": yaml_files,
         "required_file_record": generation_setup.required_file_record,
         "AutoWorld": SimpleNamespace(AutoWorldRegister=SimpleNamespace(world_types={})),
     }
@@ -166,3 +181,59 @@ def test_a_world_reading_its_file_is_named_and_stays_its_own(tmp_path: Path) -> 
     assert payload["requiredFile"]["setting"] == "ALTTPSettings.rom_file"
     assert "qu'ArchiLAN ne conserve pas" in payload["error"]
     assert ns["_error_payload"](ValueError("boom")) == {"error": "boom"}
+
+
+def test_a_slot_finds_its_yaml_by_player_name_and_never_takes_another_one(tmp_path: Path) -> None:
+    """Story 17.36: slot 5 (3nvieux) used to fall on the folder's first file, the Pokemon Red one."""
+    (tmp_path / "phil_trrnt_PR.yaml").write_text("name: phil\ngame: 'Pokemon Red'\n", encoding="utf-8")
+    (tmp_path / "registration-42.yaml").write_text("# Terraria\nname: '3nvieux'\ngame: Terraria\n", encoding="utf-8")
+    ns = _load(None, [], [])
+    session = ns["_SessionTrackers"]("run.archipelago", str(tmp_path))
+
+    assert not session.tracker(5).exact
+    assert ns["yaml_files"] == ["registration-42.yaml"]
+
+    (tmp_path / "registration-42.yaml").unlink()
+    fresh = ns["_SessionTrackers"]("run.archipelago", str(tmp_path))
+    with pytest.raises(ValueError, match="no yaml found for slot 5"):
+        fresh.tracker(5)
+
+
+def test_a_world_missing_from_the_container_is_said_and_stays_its_own(tmp_path: Path) -> None:
+    """Story 17.36: the 110-slot game of 2026-11-13, one Pokemon Red slot took every slot down."""
+    (tmp_path / "phil.yaml").write_text("name: phil\ngame: 'Pokemon Red'\n", encoding="utf-8")
+    (tmp_path / "alice.yaml").write_text("name: alice\n", encoding="utf-8")
+    ns = _load(None, [], [])
+    session = ns["_SessionTrackers"]("run.archipelago", str(tmp_path))
+
+    with pytest.raises(ValueError, match="le monde « Pokemon Red » n'est pas installé"):
+        session.tracker(4)
+    assert not session.tracker(1).exact, "the other slots are still tracked"
+
+
+def test_the_fallback_rolls_only_the_slot_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Story 17.36: Generate reads its whole folder, so the fallback hands it a folder with one file."""
+    (tmp_path / "phil.yaml").write_text("name: phil\ngame: 'Pokemon Red'\n", encoding="utf-8")
+    (tmp_path / "alice.yaml").write_text("name: alice\ngame: A\n", encoding="utf-8")
+    with open(os.path.join(_REPO_ROOT, "reachable.py"), encoding="utf-8") as handle:
+        tree = ast.parse(handle.read())
+    body = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "build_multiworld"]
+    seen: list = []
+
+    class _Stop(Exception):
+        pass
+
+    def fake_main(args: object) -> tuple:
+        seen.append(sorted(os.listdir(getattr(args, "player_files_path"))))
+        raise _Stop()
+
+    fake_generate = SimpleNamespace(main=fake_main, mystery_argparse=lambda: SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "Generate", fake_generate)
+    import shutil
+    import tempfile
+    namespace: dict = {"sys": sys, "tempfile": tempfile, "shutil": shutil, "Path": Path, "MultiWorld": object}
+    exec(compile(ast.Module(body=body, type_ignores=[]), "reachable.py", "exec"), namespace)
+
+    with pytest.raises(_Stop):
+        namespace["build_multiworld"]("A", "alice", str(tmp_path / "alice.yaml"), {})
+    assert seen == [["alice.yaml"]]
