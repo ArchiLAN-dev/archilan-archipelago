@@ -177,6 +177,7 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 
 # Permissive Choice metaclass (rune4, smash64, untitled_goose_game) and host permission gates: the
 # preparation every script that loads apworlds or generates shares - see generation_setup.py.
+import progression_cap  # noqa: E402
 from generation_setup import (  # noqa: E402
     allow_as_dict_of_every_option,
     apply_host_gates,
@@ -434,6 +435,12 @@ if __name__ == "__main__":
 
     # Story 38.24: a failed output releases the events its world's other stages wait on, so it fails fast.
     release_events_on_output_failure(_autoworld)
+
+    # Story 56.6: a giant world hosts no more than k times its fair share of the others' progression (opt-in).
+    _cap = progression_cap.cap_factor()
+    if _cap is not None:
+        import Main as _main_module
+        progression_cap.install(_main_module, _cap)
 
     try:
         erargs, seed = Generate.main()

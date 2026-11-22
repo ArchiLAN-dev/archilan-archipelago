@@ -125,7 +125,8 @@ def test_read_multidata_and_the_image_carry_the_module() -> None:
     with open(os.path.join(_REPO_ROOT, "Dockerfile"), encoding="utf-8") as handle:
         dockerfile = handle.read()
     assert "COPY slot_measures.py /usr/local/lib/python3.13/site-packages/slot_measures.py" in dockerfile
-    assert "slot_measures\"" in dockerfile  # the import guard of the build
+    guard = next(line for line in dockerfile.splitlines() if line.startswith("RUN python -c \"import "))
+    assert "slot_measures" in guard  # the import guard of the build
 
 
 def test_generate_multiworld_prints_the_measures_before_the_output_name() -> None:
