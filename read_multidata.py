@@ -12,7 +12,11 @@ same file - and nothing else. The container is one-shot and network-disabled on 
 
 Output shape::
 
-    {"seedName": "...", "slots": [{"slot": 1, "name": "Alice", "game": "Minecraft", "type": 1}]}
+    {"seedName": "...", "slots": [{"slot": 1, "name": "Alice", "game": "Minecraft", "type": 1}],
+     "measures": [{"slot": 1, "name": "Alice", "game": "Minecraft", "locations": 400,
+                   "ownProgression": 60, "hostedProgression": 12}]}
+
+``measures`` (story 56.1, slot_measures.py) covers the player slots only.
 
 ``type`` is Archipelago's ``SlotType``: 0 spectator, 1 player, 2 group (an item-link pseudo
 slot). The caller decides what to do with the non-players; this script reports them rather than
@@ -101,8 +105,10 @@ def main() -> None:
             }
         )
 
+    from slot_measures import measure  # noqa: PLC0415 - installed in site-packages in the AP image
+
     seed_name = multidata.get("seed_name", "")
-    print(json.dumps({"seedName": str(seed_name), "slots": slots}))
+    print(json.dumps({"seedName": str(seed_name), "slots": slots, "measures": measure(multidata)}))
 
 
 if __name__ == "__main__":

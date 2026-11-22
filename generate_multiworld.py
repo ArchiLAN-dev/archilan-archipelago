@@ -185,6 +185,7 @@ from generation_setup import (  # noqa: E402
     declared_required_files,
     disable_file_dialogs,
     install_permissive_choice_meta,
+    measures_line,
     release_events_on_output_failure,
     required_file_record,
     soften_accessibility_check,
@@ -448,6 +449,10 @@ if __name__ == "__main__":
     _out_dir = pathlib.Path(getattr(erargs, "outputpath", "/data/output"))
     _out_files = sorted(_out_dir.glob("*.zip")) or sorted(_out_dir.glob("*.archipelago"))
     if _out_files:
+        # Story 56.1: size and progression share of each slot, read back from the output just written.
+        _measures = measures_line(str(_out_files[0]))
+        if _measures is not None:
+            print(_measures, file=sys.stderr, flush=True)
         print(_out_files[0].name, flush=True)
     else:
         print(f"ERROR: no output file found in {_out_dir}", file=sys.stderr)

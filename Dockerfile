@@ -82,6 +82,8 @@ COPY apworld_import.py /usr/local/lib/python3.13/site-packages/apworld_import.py
 COPY option_schema.py /usr/local/lib/python3.13/site-packages/option_schema.py
 COPY world_names.py /usr/local/lib/python3.13/site-packages/world_names.py
 COPY generation_setup.py /usr/local/lib/python3.13/site-packages/generation_setup.py
+# Story 56.1: slot measures, imported by read_multidata.py and by generation_setup.measures_line.
+COPY slot_measures.py /usr/local/lib/python3.13/site-packages/slot_measures.py
 COPY reachable.py /reachable/reachable.py
 COPY reachable_host.py /reachable/reachable_host.py
 COPY protocol_io.py /reachable/protocol_io.py
@@ -106,6 +108,7 @@ RUN for f in /usr/local/bin/generate_template.py \
              /usr/local/lib/python3.13/site-packages/apworld_import.py \
              /usr/local/lib/python3.13/site-packages/option_schema.py \
              /usr/local/lib/python3.13/site-packages/generation_setup.py \
+             /usr/local/lib/python3.13/site-packages/slot_measures.py \
              /reachable/reachable.py \
              /reachable/reachable_host.py \
              /reachable/protocol_io.py \
@@ -126,7 +129,7 @@ RUN for f in /usr/local/bin/generate_template.py \
 # option_schema.py was added to the repo without this COPY: the image built and shipped happily, and
 # introspection died on `ModuleNotFoundError` against a real apworld hours later. These modules have
 # no import-time side effects, so importing them here is cheap and catches the whole class.
-RUN python -c "import apworld_import, option_schema, generation_setup, world_names"
+RUN python -c "import apworld_import, option_schema, generation_setup, world_names, slot_measures"
 
 # Same idea for the Beat Saber song list (story 38.17): an empty or broken file would only show as a failed
 # Beat Saber generation, in production.
