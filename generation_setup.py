@@ -229,6 +229,42 @@ def warning_line(record):
     return f"{WARNING_SENTINEL} {json.dumps(record, ensure_ascii=False)}"
 
 
+MEASURES_SENTINEL = "###ARCHILAN-MEASURES###"
+
+
+def measures_line(output_path, loads=None):
+    """Story 56.1: the line that carries the slot measures of a generation's own output, or None.
+
+    The output is the zip (or bare .archipelago) the generation has just written; its multidata is decoded with
+    Archipelago's restricted unpickler like any other. Never raises: a generation does not fail over a measure.
+    """
+    import io
+    import json
+    import zipfile
+    import zlib
+
+    try:
+        if loads is None:
+            from Utils import restricted_loads as loads  # noqa: PLC0415 - only importable inside the AP image
+        from slot_measures import measure  # noqa: PLC0415
+
+        with open(output_path, "rb") as handle:
+            data = handle.read()
+        if zipfile.is_zipfile(io.BytesIO(data)):
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                names = [n for n in archive.namelist() if n.endswith(".archipelago")]
+                if len(names) != 1:
+                    return None
+                data = archive.read(names[0])
+        multidata = loads(zlib.decompress(data[1:]))
+        if not isinstance(multidata, dict):
+            return None
+        return f"{MEASURES_SENTINEL} {json.dumps(measure(multidata), ensure_ascii=False)}"
+    except Exception as exc:  # noqa: BLE001 - reported, never fatal
+        print(f"Warning: slot measures unavailable: {exc.__class__.__name__}: {exc}", file=sys.stderr, flush=True)
+        return None
+
+
 def allow_as_dict_of_every_option(common_options_cls=None):
     """`options.as_dict()` of every option works, as in an optimized build (story 38.25). Idempotent.
 
