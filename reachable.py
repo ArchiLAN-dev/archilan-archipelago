@@ -19,7 +19,6 @@ Outputs JSON to stdout:
 from __future__ import annotations
 
 import argparse
-import atexit
 import importlib.abc
 import importlib.machinery
 import json
@@ -173,7 +172,7 @@ warnings.filterwarnings("ignore")  # silence _speedups warning
 # The same preparation as generate_multiworld.py (story 9.55): Generate runs on every yaml of the
 # session here, so a world that loads or a player option that generates there must do so here too,
 # or the run generates and then has no reachability at all. Armed before any world is imported.
-from generation_setup import allow_as_dict_of_every_option, apply_host_gates, disable_file_dialogs, install_permissive_choice_meta, required_file_record, soften_accessibility_check  # noqa: E402
+from generation_setup import allow_as_dict_of_every_option, apworld_extract_dir, apply_host_gates, disable_file_dialogs, install_permissive_choice_meta, required_file_record, soften_accessibility_check  # noqa: E402
 install_permissive_choice_meta()
 
 from BaseClasses import CollectionState, LocationProgressType, MultiWorld, ItemClassification  # noqa: E402
@@ -255,8 +254,7 @@ def _load_apworlds_from(apworld_dir: pathlib.Path, ahead: bool = True) -> None:
         if mod in sys.modules:
             continue
 
-        tmp_dir = tempfile.mkdtemp(prefix="apworld_")
-        atexit.register(shutil.rmtree, tmp_dir, True)
+        tmp_dir = apworld_extract_dir()
         try:
             with zipfile.ZipFile(str(apw)) as zf:
                 for member in zf.infolist():

@@ -539,3 +539,24 @@ def apworld_sources(directory):
         for name in sorted(os.listdir(directory))
         if name.endswith(".apworld")
     ]
+
+
+def apworld_extract_dir():
+    """A fresh directory to extract one apworld into, laid out like an Archipelago install.
+
+    The directory returned is `<temp>/worlds`, so a world lands at `<temp>/worlds/<pkg>` as it does under an
+    install. Some worlds find their data from that layout: Super Metroid's VARIA randomizer takes
+    `Path(__file__).parents[4]` as the install root and opens `worlds/sm/variaRandomizer/standard_presets/...`
+    under it. Extracted at `<temp>/sm`, that root was `/tmp` and generation failed on a missing preset file.
+    The whole temp tree is removed at exit.
+    """
+    import atexit
+    import shutil
+    import tempfile
+
+    root = tempfile.mkdtemp(prefix="apworld_")
+    atexit.register(shutil.rmtree, root, True)
+    worlds = os.path.join(root, "worlds")
+    os.mkdir(worlds)
+    return worlds
+
