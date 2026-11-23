@@ -9,7 +9,6 @@ Python 3.12 and cannot load them).
 Stubs out client-only third-party C extensions that apworlds import at module
 level but are never needed server-side (dolphin_memory_engine, gclib, …).
 """
-import atexit
 import json as _json
 import importlib
 import os
@@ -179,6 +178,7 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 # preparation every script that loads apworlds or generates shares - see generation_setup.py.
 import progression_cap  # noqa: E402
 from generation_setup import (  # noqa: E402
+    apworld_extract_dir,
     allow_as_dict_of_every_option,
     apply_host_gates,
     apworld_sources,
@@ -269,8 +269,7 @@ if __name__ == "__main__":
             _mod = f"worlds.{_pkg}"
             if _mod in sys.modules:
                 continue
-            _tmp_dir = tempfile.mkdtemp(prefix="apworld_")
-            atexit.register(shutil.rmtree, _tmp_dir, True)
+            _tmp_dir = apworld_extract_dir()
             with zipfile.ZipFile(str(_apw)) as _zf2:
                 for _member in _zf2.infolist():
                     _member.filename = _member.filename.replace("\\", "/")

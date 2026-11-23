@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """Generate Archipelago YAML template for a given game."""
 import argparse
-import atexit
 import importlib
 import json as _json
 import os
 import pathlib
-import shutil
 import subprocess
 import sys
-import tempfile
 import traceback
 import types
 import zipfile
@@ -157,7 +154,7 @@ _worlds_stub.World = World
 # Archipelago reserves "random" as a keyword; some apworlds use it anyway.
 # On AssertionError we strip option_random* and retry so the world still loads. Shared with every
 # script that loads apworlds (generation_setup.py, story 9.55).
-from generation_setup import apworld_sources, install_permissive_choice_meta  # noqa: E402
+from generation_setup import apworld_extract_dir, apworld_sources, install_permissive_choice_meta  # noqa: E402
 install_permissive_choice_meta()
 
 # Expose worlds/__init__.py public symbols that apworlds import directly.
@@ -294,8 +291,7 @@ if args.world_directory:
         # Loading the ZIP directly via zipimport sets __file__ to a path inside
         # the archive (e.g. /tmp/xxx.apworld/raft/module.pyc), which is not a
         # real filesystem path - open() on it fails with NotADirectoryError.
-        _tmp_dir = tempfile.mkdtemp(prefix="apworld_")
-        atexit.register(shutil.rmtree, _tmp_dir, True)
+        _tmp_dir = apworld_extract_dir()
         with zipfile.ZipFile(str(_apw)) as _zf:
             for _member in _zf.infolist():
                 _member.filename = _member.filename.replace("\\", "/")

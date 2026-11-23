@@ -18,15 +18,12 @@ names (start_hints, start_inventory, local_items...): item_name_to_id keys, item
 implicit "Everything" group.
 """
 import argparse
-import atexit
 import importlib
 import json
 import os
 import pathlib
 import re
-import shutil
 import sys
-import tempfile
 import traceback
 import types
 import zipfile
@@ -183,7 +180,7 @@ _worlds_stub.__getattr__ = _worlds_getattr  # type: ignore[attr-defined]
 #
 # Shared with every script that loads apworlds (generation_setup.py, story 9.55): a world whose
 # template generates has to be loadable here too.
-from generation_setup import apworld_sources, declared_required_files, install_permissive_choice_meta  # noqa: E402
+from generation_setup import apworld_extract_dir, apworld_sources, declared_required_files, install_permissive_choice_meta  # noqa: E402
 install_permissive_choice_meta()
 
 # ─── World imports: honest first, stub only what is truly missing ────────────
@@ -304,8 +301,7 @@ for _apw in sorted(pathlib.Path(args.world_directory).glob("*.apworld")):
     if world_mod_name in sys.modules:
         continue
 
-    _tmp_dir = tempfile.mkdtemp(prefix="apworld_")
-    atexit.register(shutil.rmtree, _tmp_dir, True)
+    _tmp_dir = apworld_extract_dir()
     _extract_apworld(str(_apw), _tmp_dir)
 
     # What goes on the import path is the directory *containing* the package, which is the archive
