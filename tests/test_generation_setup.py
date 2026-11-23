@@ -81,7 +81,11 @@ def _fake_options_module():
 
     class ChoiceMeta(type):
         def __new__(mcs, name, bases, namespace, **kwargs):
-            assert not any(k.startswith("option_random") for k in namespace), "random is reserved"
+            options = {k[7:].lower(): v for k, v in namespace.items() if k.startswith("option_")}
+            aliases = {k[6:].lower(): v for k, v in namespace.items() if k.startswith("alias_")}
+            assert "random" not in options, "Choice option 'random' cannot be manually assigned."
+            assert "random" not in aliases, "Choice option 'random' cannot be manually assigned."
+            namespace = dict(namespace, name_lookup={v: k for k, v in options.items()})
             return super().__new__(mcs, name, bases, namespace, **kwargs)
 
     class Choice(metaclass=ChoiceMeta):
@@ -90,16 +94,30 @@ def _fake_options_module():
     return types.SimpleNamespace(Choice=Choice), ChoiceMeta
 
 
-def test_a_choice_defining_option_random_loads_without_it():
+def test_a_choice_defining_option_random_loads_and_keeps_its_value():
+    """Raccoin tests `starting_character == 6  # 6 is 'Random'`: the value must still be an option."""
     module, meta = _fake_options_module()
     generation_setup.install_permissive_choice_meta(module)
 
-    class Goal(module.Choice):
-        option_a = 0
-        option_random = 1
+    class StartingCharacter(module.Choice):
+        option_big_eater = 0
+        option_random = 6
+        alias_random = 6
 
-    assert not hasattr(Goal, "option_random")
-    assert Goal.option_a == 0
+    assert StartingCharacter.name_lookup == {0: "big_eater", 6: "world_random"}
+    assert StartingCharacter.option_random == 6
+    assert StartingCharacter.option_big_eater == 0
+
+
+def test_a_name_that_only_starts_with_random_is_kept():
+    module, meta = _fake_options_module()
+    generation_setup.install_permissive_choice_meta(module)
+
+    class Skin(module.Choice):
+        option_random = 0
+        option_random_skin = 1
+
+    assert Skin.name_lookup == {0: "world_random", 1: "random_skin"}
 
 
 def test_any_other_assertion_still_raises():
