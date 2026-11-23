@@ -13,7 +13,7 @@ Outputs JSON to stdout:
   "reachable":  [{"id": 123, "name": "..."}],
   "checked":    [{"id": 123, "name": "..."}],
   "unreachable": [{"id": 123, "name": "..."}],
-  "items_received": [{"id": 123, "name": "...", "count": 2}]
+  "items_received": [{"id": 123, "name": "...", "count": 2, "flags": 1}]
 }
 """
 from __future__ import annotations
@@ -791,6 +791,20 @@ def _seed_precollected_items(mw, player_id, arch, slot, item_id_to_name) -> None
 # Trackers, daemon and main
 # ---------------------------------------------------------------------------
 
+def _entry_flags(entry: object) -> int:
+    """The AP flags of a received item: a NetworkItem's `flags`, the 4th element of a list, 0 when absent."""
+    if hasattr(entry, "flags"):
+        flags = getattr(entry, "flags")
+    elif isinstance(entry, (list, tuple)) and len(entry) > 3:
+        flags = entry[3]
+    else:
+        flags = 0
+    try:
+        return int(flags or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 class _SlotTracker:
     """One slot's reachability over a loaded world: the slot's static data, then one fresh
     CollectionState per request, so a request never leaks into the next one."""
@@ -848,7 +862,8 @@ class _SlotTracker:
         """Compute reachability from in-memory state.
 
         checked_ids: set of checked location IDs for this slot.
-        received_items: list of [item_id, sender_slot, location_id] tuples/lists.
+        received_items: list of [item_id, sender_slot, location_id(, flags)] tuples/lists, or NetworkItems.
+        The AP flags (progression, useful, trap) are optional: an older bridge sends three elements.
         """
         mw, player_id, slot = self.mw, self.player_id, self.slot
         arch_locs, id_to_loc, slot_names = self.arch_locs, self.id_to_loc, self.slot_names
@@ -857,11 +872,13 @@ class _SlotTracker:
 
         cs = CollectionState(mw)
         item_counts: Counter = Counter()
+        item_flags: dict[str, int] = {}
         for entry in received_items:
             item_id = entry[0] if isinstance(entry, (list, tuple)) else (entry.item if hasattr(entry, "item") else 0)
             if item_id <= 0 or item_id not in item_id_to_name:
                 continue
             name = item_id_to_name[item_id]
+            item_flags[name] = item_flags.get(name, 0) | _entry_flags(entry)
             world_item = mw.create_item(name, player_id)
             cs.collect(world_item)
             item_counts[name] += 1
@@ -895,7 +912,7 @@ class _SlotTracker:
         checked_not_reach   = [loc_entry(i) for i in checked_ids if i not in reachable_ids]
 
         items_out = [
-            {"id": dp.get("item_name_to_id", {}).get(name, 0), "name": name, "count": count}
+            {"id": dp.get("item_name_to_id", {}).get(name, 0), "name": name, "count": count, "flags": item_flags.get(name, 0)}
             for name, count in item_counts.most_common()
         ]
 
