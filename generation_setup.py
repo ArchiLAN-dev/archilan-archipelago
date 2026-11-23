@@ -575,3 +575,17 @@ def apworld_extract_dir():
     os.mkdir(worlds)
     return worlds
 
+
+def reserve_stdout_for_json():
+    """Keep the real stdout for the caller's JSON and send everything else written to stdout to stderr.
+
+    Returns a text stream on the original stdout. File descriptor 1 is pointed at stderr, so a world that prints,
+    writes to `sys.__stdout__` or straight to the descriptor, or runs a subprocess, lands in the logs instead of in
+    front of the JSON the orchestrator stores as-is.
+    """
+    sys.stdout.flush()
+    json_out = os.fdopen(os.dup(1), "w", encoding="utf-8")
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
+    return json_out
+

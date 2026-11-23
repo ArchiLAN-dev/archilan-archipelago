@@ -17,12 +17,12 @@ def _tree() -> ast.Module:
 
 
 def _is_stdout_redirect(node: ast.stmt) -> bool:
-    """`sys.stdout = sys.stderr`."""
+    """`_JSON_OUT = reserve_stdout_for_json()`."""
     return (
         isinstance(node, ast.Assign)
         and len(node.targets) == 1
-        and ast.unparse(node.targets[0]) == "sys.stdout"
-        and ast.unparse(node.value) == "sys.stderr"
+        and ast.unparse(node.targets[0]) == "_JSON_OUT"
+        and ast.unparse(node.value) == "reserve_stdout_for_json()"
     )
 
 
@@ -54,18 +54,28 @@ def test_only_the_json_reaches_the_real_stdout() -> None:
     assert ast.unparse(to_real_stdout[0].args[0]).startswith("json.dumps(")
 
 
-def test_a_chatty_import_no_longer_reaches_stdout(capsys) -> None:
-    """What the redirect does, on a print standing for the apworld's."""
+_CHATTY = r"""
+import os, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+from generation_setup import reserve_stdout_for_json
+out = reserve_stdout_for_json()
+print("A print")
+sys.__stdout__.write("B dunder stdout\\n"); sys.__stdout__.flush()
+os.write(1, b"C descriptor\\n")
+subprocess.run([sys.executable, "-c", "print('D subprocess')"])
+print('{"options": {}}', file=out)
+out.flush()
+"""
+
+
+def test_whatever_a_world_writes_to_stdout_goes_to_stderr() -> None:
+    """Cookie Clicker and others wrote past `sys.stdout`: `sys.__stdout__`, descriptor 1, a subprocess."""
+    import subprocess
     import sys
 
-    real_stdout = sys.stdout
-    sys.stdout = sys.stderr
-    try:
-        print("C compression module not found.  Falling back to python.")
-        print('{"options": {}}', file=real_stdout)
-    finally:
-        sys.stdout = real_stdout
+    repo = os.path.dirname(_SCRIPT)
+    done = subprocess.run([sys.executable, "-c", _CHATTY, repo], capture_output=True, text=True, check=True)
 
-    captured = capsys.readouterr()
-    assert captured.out == '{"options": {}}\n'
-    assert "C compression" in captured.err
+    assert done.stdout == '{"options": {}}\n'
+    for line in ("A print", "B dunder stdout", "C descriptor", "D subprocess"):
+        assert line in done.stderr

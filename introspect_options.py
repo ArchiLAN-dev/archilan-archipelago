@@ -30,9 +30,12 @@ import zipfile
 
 # Story 38.31: stdout carries the JSON and nothing else. An apworld that prints at import ("C compression module
 # not found") would otherwise sit in front of it, and the orchestrator, which stores stdout as-is, could no longer
-# read the locations. Everything printed until the end goes to stderr; only the final JSON reaches the real stdout.
-_JSON_OUT = sys.stdout
-sys.stdout = sys.stderr
+# read the locations. Everything written until the end goes to stderr; only the final JSON reaches the real stdout.
+# The redirect is on file descriptor 1, not only `sys.stdout`: worlds also write through `sys.__stdout__`, straight
+# to the descriptor, or from a subprocess (Cookie Clicker, Dolphin-based worlds, vendored zips).
+from generation_setup import reserve_stdout_for_json  # noqa: E402
+
+_JSON_OUT = reserve_stdout_for_json()
 
 # Kivy: suppress its argument parser and env-var hooks.
 os.environ.setdefault("KIVY_NO_ARGS", "1")
@@ -472,3 +475,4 @@ groups = item_groups(world_cls)
 required_files = declared_required_files(world_cls)
 
 print(json.dumps({"options": result, "locations": locations, "items": items, "itemGroups": groups, "requiredFiles": required_files}), file=_JSON_OUT)
+_JSON_OUT.flush()
