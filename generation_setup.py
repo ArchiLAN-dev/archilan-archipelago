@@ -33,10 +33,25 @@ def install_permissive_choice_meta(options_module=None):
         try:
             return original(mcs, name, bases, namespace, **kwargs)
         except AssertionError as exc:
-            if "random" in str(exc).lower():
-                filtered = {k: v for k, v in namespace.items() if not k.startswith("option_random")}
-                return original(mcs, name, bases, filtered, **kwargs)
-            raise
+            if "random" not in str(exc).lower():
+                raise
+            # Only the exact name `random` is reserved. Its value is kept, under `world_random`: a world that
+            # tests `== 6  # 6 is 'Random'` (Raccoin) or `== option_random` asserted or broke once the value
+            # was gone. Other names starting with `random` (`option_random_skin`) are legal and stay.
+            renamed = {}
+            random_values = []
+            for key, value in namespace.items():
+                if key.startswith("option_") and key[7:].lower() == "random":
+                    random_values.append((key, value))
+                    renamed.setdefault("option_world_random", value)
+                elif key.startswith("alias_") and key[6:].lower() == "random":
+                    continue
+                else:
+                    renamed[key] = value
+            cls = original(mcs, name, bases, renamed, **kwargs)
+            for key, value in random_values:
+                type.__setattr__(cls, key, value)
+            return cls
 
     _permissive_new._archilan_permissive = True
     choice_meta.__new__ = _permissive_new
