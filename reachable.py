@@ -878,7 +878,12 @@ class _SlotTracker:
             name = item_id_to_name[item_id]
             item_flags[name] = item_flags.get(name, 0) | _entry_flags(entry)
             world_item = mw.create_item(name, player_id)
-            cs.collect(world_item)
+            # prevent_sweep: collect() otherwise runs a full sweep_for_advancements as soon as an
+            # item changes the state. The rebuilt world is not filled, so that sweep picks up the
+            # locked items (MM's starting Hero's Shield and Kokiri Sword...), which received_items
+            # already holds once their location is checked: they counted twice and count-based
+            # logic read one Progressive Shield as the Mirror Shield. Only the event sweep below.
+            cs.collect(world_item, prevent_sweep=True)
             item_counts[name] += 1
 
         cs.sweep_for_advancements(locations=self.event_locations)
